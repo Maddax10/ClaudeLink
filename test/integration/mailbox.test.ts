@@ -107,6 +107,64 @@ describe('le marqueur de reponse automatique', () => {
   });
 });
 
+describe('rejouer le dernier lot', () => {
+  /**
+   * Le curseur avance des que le lot est lu, sans que rien ne garantisse qu'il ait ete montre a
+   * quelqu'un : plusieurs sessions d'une meme machine partagent ce curseur, et un hook n'apprend
+   * jamais si l'hote a affiche sa sortie. C'est arrive le 9 aout 2026, et il a fallu ouvrir les
+   * fichiers du depot a la main pour retrouver le message.
+   */
+  it('rend une seconde fois ce qui vient d etre consomme, sans rien avancer', async () => {
+    await mac.mailbox.send('un message qui pourrait se perdre');
+
+    const first = await win.mailbox.receive('session');
+    expect(first.deliveries.map((d) => d.safeText)).toContain('un message qui pourrait se perdre');
+
+    // Consomme : une seconde lecture ordinaire ne rend plus rien.
+    expect((await win.mailbox.receive('session')).deliveries).toHaveLength(0);
+
+    // Mais le lot reste rejouable, autant de fois qu'il faut.
+    expect((await win.mailbox.replay('session')).deliveries.map((d) => d.safeText)).toContain(
+      'un message qui pourrait se perdre',
+    );
+    expect((await win.mailbox.replay('session')).deliveries.map((d) => d.safeText)).toContain(
+      'un message qui pourrait se perdre',
+    );
+
+    // Et rejouer n'avance rien : le courrier neuf arrive toujours.
+    await mac.mailbox.send('le suivant');
+    expect((await win.mailbox.receive('session')).deliveries.map((d) => d.safeText)).toContain(
+      'le suivant',
+    );
+  }, 60_000);
+
+  /**
+   * Une lecture a vide ne doit pas effacer le filet. C'est le cas nominal du hook de fin de tour,
+   * qui tourne a chaque tour de chaque session : s'il ecrasait la trace, elle ne survivrait jamais
+   * assez longtemps pour servir.
+   */
+  it('survit a une lecture qui ne livre rien', async () => {
+    await mac.mailbox.send('celui qu on veut pouvoir rejouer');
+    await win.mailbox.receive('session');
+
+    await win.mailbox.receive('session');
+    await win.mailbox.receive('session');
+
+    expect((await win.mailbox.replay('session')).deliveries.map((d) => d.safeText)).toContain(
+      'celui qu on veut pouvoir rejouer',
+    );
+  }, 60_000);
+
+  /** Un filet par role, comme il y a un curseur par role : le rejeu de la session ne doit pas
+   *  rendre ce que l'auto-repondeur a lu, ni l'inverse. */
+  it('garde un filet distinct pour chaque role', async () => {
+    const replayed = (await win.mailbox.replay('watch')).deliveries.map((d) => d.safeText);
+
+    expect(replayed).toContain('deuxieme message');
+    expect(replayed).not.toContain('celui qu on veut pouvoir rejouer');
+  }, 60_000);
+});
+
 describe('les deux machines poussent en meme temps', () => {
   it('ne perd aucun message', async () => {
     await Promise.all([

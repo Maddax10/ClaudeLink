@@ -166,12 +166,53 @@ export class Mailbox {
       return { deliveries: [], skipped: 0, rejected: 0 };
     }
 
-    const paths = await this.repo.addedFiles(cursor.lastCommit, head, inboxDir(this.config.machineName));
+    const result = await this.collect(cursor.lastCommit, head);
+
+    // Le curseur avance apres la lecture du lot, et **rien ne garantit que le lot a ete montre a
+    // quelqu'un** : le hook ecrit sa sortie, l'hote en fait ce qu'il veut, et plusieurs sessions
+    // de la meme machine partagent ce curseur unique - la premiere qui lit prive les autres.
+    // Mesure le 9 aout 2026 : sept processus `claude` tournaient sur ce Mac, tous portant les
+    // hooks. On garde donc de quoi rejouer le dernier lot ; sans cette trace, un lot que personne
+    // n'a vu ne se relit qu'en ouvrant les fichiers du depot a la main.
+    if (result.deliveries.length > 0) {
+      await this.writeCursorAt(replayName(role), cursor);
+    }
+    await this.writeCursorAt(role, { lastCommit: head });
+
+    return result;
+  }
+
+  /**
+   * Le dernier lot livre a ce role, une seconde fois, sans rien avancer.
+   *
+   * C'est le filet du paragraphe ci-dessus, et il ne pretend pas empecher la perte : il la rend
+   * reparable. Appele deux fois, il rend deux fois la meme chose.
+   */
+  async replay(role: ReaderRole): Promise<ReceiveResult> {
+    return this.lock.withLock(() => this.replayLocked(role));
+  }
+
+  private async replayLocked(role: ReaderRole): Promise<ReceiveResult> {
+    const before = await this.readCursorAt(replayName(role));
+    const after = await this.readCursorAt(role);
+    if (before === undefined || after === undefined) {
+      return { deliveries: [], skipped: 0, rejected: 0 };
+    }
+
+    await this.assertMailbox();
+    await this.repo.fetch();
+    return this.collect(before.lastCommit, after.lastCommit);
+  }
+
+  /** Ce qui est arrive entre deux commits, deja assaini et borne. Partage par la lecture et par
+   *  le rejeu, pour qu'un lot rejoue soit exactement celui qui avait ete livre. */
+  private async collect(fromSha: string, toSha: string): Promise<ReceiveResult> {
+    const paths = await this.repo.addedFiles(fromSha, toSha, inboxDir(this.config.machineName));
 
     const pending: { path: string; message: Message }[] = [];
     let rejected = 0;
     for (const path of paths) {
-      const message = await this.readMessageAt(head, path);
+      const message = await this.readMessageAt(toSha, path);
       if (message === undefined) {
         rejected += 1;
         continue;
@@ -185,10 +226,6 @@ export class Mailbox {
     for (const item of bounded.deliver) {
       deliveries.push({ message: item.message, safeText: sanitizeInbound(item.message.text) });
     }
-
-    // Le curseur avance apres la lecture du lot. Une notification n'etant jamais acquittee,
-    // « au moins une fois » est le seul contrat honnete : un doublon est possible, une perte non.
-    await this.writeCursor(role, { lastCommit: head });
 
     return { deliveries, skipped: bounded.skipped, rejected };
   }
@@ -239,25 +276,39 @@ export class Mailbox {
     }
   }
 
-  private cursorPath(role: ReaderRole): string {
-    return join(this.workDir, `cursor.${role}.json`);
+  private cursorPath(name: string): string {
+    return join(this.workDir, `cursor.${name}.json`);
   }
 
   private async readCursor(role: ReaderRole): Promise<Cursor | undefined> {
+    return this.readCursorAt(role);
+  }
+
+  private async readCursorAt(name: string): Promise<Cursor | undefined> {
     try {
-      return parseCursor(await readFile(this.cursorPath(role), 'utf8'));
+      return parseCursor(await readFile(this.cursorPath(name), 'utf8'));
     } catch {
       return undefined;
     }
   }
 
   private async writeCursor(role: ReaderRole, cursor: Cursor): Promise<void> {
-    const path = this.cursorPath(role);
+    return this.writeCursorAt(role, cursor);
+  }
+
+  private async writeCursorAt(name: string, cursor: Cursor): Promise<void> {
+    const path = this.cursorPath(name);
     const temporary = `${path}.tmp`;
     // Ecriture atomique : un curseur a moitie ecrit ferait relire ou sauter du courrier.
     await writeFile(temporary, serializeCursor(cursor), 'utf8');
     await rename(temporary, path);
   }
+}
+
+/** Le curseur d'avant le dernier lot. Un fichier a part, jamais une cle dans le curseur courant :
+ *  ecrire les deux dans le meme fichier ferait perdre le rejeu au moment ou on en a besoin. */
+function replayName(role: ReaderRole): string {
+  return `${role}.previous`;
 }
 
 export function mailboxMarkerContent(): string {

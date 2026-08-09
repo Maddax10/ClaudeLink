@@ -22,7 +22,7 @@ async function main(argv: string[]): Promise<number> {
     case 'send':
       return send(rest);
     case 'inbox':
-      return inbox();
+      return inbox(rest);
     case 'watch':
       return rest.includes('--stop') ? stopWatch() : watch();
     case 'prune':
@@ -42,6 +42,7 @@ const USAGE = `claude-link - a message channel between two machines
   init --machine <name> --peer <name> --repo <url>   set up this machine
   send [text]                                        send a message (or pipe it on stdin)
   inbox                                              show new messages for this machine
+  inbox --again                                      show the last batch again, without consuming
   watch                                              answer incoming messages with claude -p
   watch --stop                                       stop the watcher running on this machine
   prune                                              drop old messages, keeping the newest
@@ -118,10 +119,18 @@ async function send(args: string[]): Promise<number> {
   return 0;
 }
 
-async function inbox(): Promise<number> {
+async function inbox(args: string[]): Promise<number> {
   const { config, workspace } = await loadApp();
-  const result = await workspace.mailbox.receive('session');
-  process.stdout.write(renderDeliveries(result, config.peer) ?? 'no new messages\n');
+  const again = args.includes('--again');
+  const result = again
+    ? await workspace.mailbox.replay('session')
+    : await workspace.mailbox.receive('session');
+  const rendered = renderDeliveries(result, config.peer);
+  if (rendered !== undefined) {
+    process.stdout.write(rendered);
+    return 0;
+  }
+  process.stdout.write(again ? 'nothing to replay\n' : 'no new messages\n');
   return 0;
 }
 
