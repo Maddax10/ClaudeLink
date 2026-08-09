@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveConfig } from '../../src/core/config.js';
 import { type Workspace, openWorkspace } from '../../src/workspace.js';
-import { configureChannel } from '../../src/setup.js';
+import { configureChannel, installChannel } from '../../src/setup.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -92,6 +92,93 @@ describe('configureChannel', () => {
 
   it('ne reconfigure pas par-dessus un canal existant', async () => {
     const home = homeFor('deja-la');
+    await configureChannel({ home, machineName: 'mac', peer: 'windows', repoUrl: mailbox });
+
+    const text = await installChannel(
+      { home, machineName: 'autre', peer: 'windows', mode: 'url', repo: mailbox },
+      async () => '',
+    );
+
+    expect(text).toContain('already has a channel configured');
+    const kept = JSON.parse(await readFile(join(home, 'config.json'), 'utf8')) as { machineName: string };
+    expect(kept.machineName).toBe('mac');
+  }, 60_000);
+});
+
+describe('installChannel', () => {
+  /** Un `gh` qui note ce qu'on lui demande : ce qu'il ne recoit pas compte autant que ce qu'il rend. */
+  function spy(reply: (args: readonly string[]) => string) {
+    const calls: string[][] = [];
+    return {
+      calls,
+      run: async (args: readonly string[]) => {
+        calls.push([...args]);
+        return reply(args);
+      },
+    };
+  }
+
+  it('installe depuis une URL donnee, sans jamais appeler gh', async () => {
+    const { run, calls } = spy(() => '');
+
+    const text = await installChannel(
+      { home: homeFor('par-url'), machineName: 'mac', peer: 'windows', mode: 'url', repo: mailbox },
+      run,
+    );
+
+    expect(text).toContain('The channel is set up');
+    expect(calls).toHaveLength(0);
+  }, 60_000);
+
+  /**
+   * La limite qui distingue une regle du code d'une consigne qu'on espere voir respectee. Au
+   * sixieme essai, `gh` ne doit pas etre touche du tout.
+   */
+  it('arrete la chasse aux noms au sixieme essai, sans lancer gh', async () => {
+    const { run, calls } = spy(() => '');
+
+    const text = await installChannel(
+      { home: homeFor('trop-d-essais'), machineName: 'mac', peer: 'windows', mode: 'create', repo: 'x', attempt: 6 },
+      run,
+    );
+
+    expect(text).toContain('Stopping after 5 taken names');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('laisse passer les cinq premiers', async () => {
+    const { calls, run } = spy((args) =>
+      args[1] === 'view' ? JSON.stringify({ url: `https://example.invalid/x` }) : '',
+    );
+
+    await installChannel(
+      { home: homeFor('cinquieme'), machineName: 'mac', peer: 'windows', mode: 'create', repo: 'x', attempt: 5 },
+      run,
+    );
+
+    expect(calls[0]).toEqual(['repo', 'create', 'x', '--private']);
+  }, 60_000);
+
+  it('rend un texte lisible quand le nom est deja pris, pas une trace', async () => {
+    const { run } = spy(() => {
+      const error = new Error('Name already exists on this account') as Error & { stderr: string };
+      error.stderr = 'Name already exists on this account';
+      throw error;
+    });
+
+    const text = await installChannel(
+      { home: homeFor('nom-pris'), machineName: 'mac', peer: 'windows', mode: 'create', repo: 'pris', attempt: 1 },
+      run,
+    );
+
+    expect(text).toContain('deja pris');
+    expect(text).not.toContain('Error');
+  });
+});
+
+describe('reconfiguration', () => {
+  it('refuse aussi par le chemin d installation complet', async () => {
+    const home = homeFor('deja-la-2');
     await configureChannel({ home, machineName: 'mac', peer: 'windows', repoUrl: mailbox });
 
     const second = await configureChannel({ home, machineName: 'autre', peer: 'windows', repoUrl: mailbox });

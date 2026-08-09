@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { type Config, resolveConfig } from './core/config.js';
+import { explainRepoFailure } from './deliver/installHint.js';
+import { type GhRunner, resolveRepo } from './git/provision.js';
 import { NotAMailboxError } from './mailbox.js';
 import { configPath } from './paths.js';
 import { openWorkspace } from './workspace.js';
@@ -71,6 +73,66 @@ export async function configureChannel(request: ChannelRequest): Promise<Channel
   }
 
   return { ok: true, config };
+}
+
+/** Au-dela, on arrete de proposer des noms et on propose autre chose. La limite vit dans le code :
+ *  une intention qu'un modele se donne a lui-meme ne se teste pas, et ne tient pas sous charge. */
+export const MAX_NAME_ATTEMPTS = 5;
+
+export interface InstallRequest {
+  readonly home: string;
+  readonly machineName: string;
+  readonly peer: string;
+  readonly mode: 'use' | 'create' | 'url';
+  readonly repo: string;
+  readonly attempt?: number;
+}
+
+/**
+ * L'installation complete : le depot d'abord, la configuration ensuite, et un texte lisible quoi
+ * qu'il arrive.
+ *
+ * Elle vit ici plutot que dans le serveur MCP pour une seule raison, et elle est suffisante : dans
+ * le serveur, la limite d'essais et le refus d'un depot de code ne seraient verifiables qu'en
+ * lancant un vrai serveur contre un vrai GitHub.
+ */
+export async function installChannel(request: InstallRequest, run?: GhRunner): Promise<string> {
+  const { home, machineName, peer, mode, repo, attempt } = request;
+
+  if (await isConfigured(home)) {
+    return `This machine already has a channel configured in ${home}. Read config.json there to see it, and remove that file by hand to start over.`;
+  }
+
+  let repoUrl = repo;
+  if (mode !== 'url') {
+    // Le compteur est verifie avant `resolveRepo` : passe la limite, on ne touche meme pas a `gh`.
+    if (mode === 'create' && (attempt ?? 1) > MAX_NAME_ATTEMPTS) {
+      return (
+        `Stopping after ${MAX_NAME_ATTEMPTS} taken names. Rather than proposing another one, tell ` +
+        'the user to pick an existing repository with mode "use", to create one under a different ' +
+        'account, or to make it themselves and pass its address with mode "url".'
+      );
+    }
+    const outcome = await resolveRepo(mode, repo, run);
+    if (!outcome.ok) {
+      return explainRepoFailure(outcome.cause, repo);
+    }
+    repoUrl = outcome.url;
+  }
+
+  const configured = await configureChannel({ home, machineName, peer, repoUrl });
+  if (!configured.ok) {
+    return configured.detail;
+  }
+
+  return (
+    `The channel is set up: "${machineName}" talking to "${peer}", through ${repoUrl}.\n\n` +
+    'Two things are still missing, and neither can be done from here.\n\n' +
+    'The hooks, which deliver mail into a session, belong in the user own settings file - tell ' +
+    'them what to add rather than writing it for them.\n\n' +
+    'And the other machine needs the same setup, pointing at the same repository address, with the ' +
+    'two names swapped.'
+  );
 }
 
 export async function isConfigured(home: string): Promise<boolean> {

@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { loadApp, loadConfig } from './app.js';
+import { NotConfiguredError, loadApp, loadConfig } from './app.js';
 import { markAwaiting } from './deliver/awaiting.js';
 import { renderDeliveries } from './deliver/render.js';
 import { readWatchProcess } from './deliver/watchProcess.js';
+import { resolveHome } from './paths.js';
+import { installChannel } from './setup.js';
 
 /**
  * Un serveur MCP ordinaire, deliberement : deux outils, rien qui pousse.
@@ -50,11 +52,92 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: 'Look right now for messages sent by the other machine and not yet seen here.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'setup_channel',
+      description:
+        'Set up the channel on this machine, once. Ask the user for both machine names and how ' +
+        'they want the mailbox repository chosen, then call this. Never guess the names, and never ' +
+        'create a repository without asking first: creating one is the only thing here that cannot ' +
+        'be undone from this side.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          machineName: { type: 'string', description: 'Name for THIS machine. Lowercase letters, digits and "-".' },
+          peer: { type: 'string', description: 'Name for the other machine. Same rules, and different.' },
+          mode: {
+            type: 'string',
+            enum: ['use', 'create', 'url'],
+            description:
+              'use: an existing GitHub repository, named by repo. create: a new private one, named ' +
+              'by repo. url: a repository address given as is, GitHub or not, which needs no gh.',
+          },
+          repo: { type: 'string', description: 'Repository name for "use" and "create", full URL for "url".' },
+          attempt: {
+            type: 'number',
+            description:
+              'For "create" only. 1 the first time, then increase by one each time a name comes ' +
+              'back taken. Refused past five, so a name hunt cannot go on forever.',
+          },
+        },
+        required: ['machineName', 'peer', 'mode', 'repo'],
+      },
+    },
   ],
 }));
 
+/** La saisie du modele, verifiee avant d'entrer dans le produit. Tout le reste - le depot, la
+ *  limite d'essais, la configuration - vit dans `setup.ts`, ou il se teste. */
+async function runSetup(args: unknown): Promise<string> {
+  const { machineName, peer, mode, repo, attempt } = (args ?? {}) as Record<string, unknown>;
+
+  if (typeof machineName !== 'string' || typeof peer !== 'string' || typeof repo !== 'string') {
+    return 'setup_channel needs machineName, peer and repo as strings.';
+  }
+  if (mode !== 'use' && mode !== 'create' && mode !== 'url') {
+    return 'setup_channel needs mode to be one of: use, create, url.';
+  }
+
+  return installChannel({
+    home: resolveHome(),
+    machineName,
+    peer,
+    mode,
+    repo,
+    ...(typeof attempt === 'number' ? { attempt } : {}),
+  });
+}
+
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { home, config, workspace } = await loadApp();
+  if (request.params.name === 'setup_channel') {
+    return { content: [{ type: 'text', text: await runSetup(request.params.arguments) }] };
+  }
+
+  const app = await loadApp().catch((error: unknown) => {
+    if (error instanceof NotConfiguredError) {
+      return undefined;
+    }
+    throw error;
+  });
+
+  // Une erreur brute ici serait la premiere chose qu'un nouvel utilisateur voit du produit. On dit
+  // plutot ce qui manque et quoi faire : c'est ce texte qui declenche la suite, puisque c'est le
+  // modele qui posera les questions et rappellera `setup_channel`.
+  if (app === undefined) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            'No channel is configured on this machine yet. Ask the user for a name for this ' +
+            'machine and a name for the other one, then how they want the mailbox repository ' +
+            'chosen - an existing GitHub repository, a new private one, or an address they already ' +
+            'have - and call setup_channel. Do not guess any of it.',
+        },
+      ],
+    };
+  }
+
+  const { home, config, workspace } = app;
 
   if (request.params.name === 'send_to_peer') {
     const { text } = request.params.arguments as { text?: unknown };
