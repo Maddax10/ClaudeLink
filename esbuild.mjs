@@ -1,4 +1,4 @@
-import { build } from 'esbuild';
+import { context } from 'esbuild';
 
 /**
  * Deux bundles autonomes, parce que le produit a deux points d'entree : le serveur MCP pour les
@@ -20,6 +20,35 @@ const common = {
   logLevel: 'warning',
 };
 
-for (const name of ['mcpServer', 'cli']) {
-  await build({ ...common, entryPoints: [`src/${name}.ts`], outfile: `dist/${name}.js` });
+/**
+ * Construit les deux bundles, et rend de quoi arreter la surveillance si on l'a demandee.
+ *
+ * `watch` sert aux tests en mode continu : ils lancent le vrai binaire, donc `dist/` doit suivre le
+ * code edite. Un seul constructeur pour toute la session, jamais un par fichier de test - vitest
+ * execute les fichiers en parallele, et deux esbuild ecrivant `dist/cli.js` en meme temps ont
+ * produit un echec intermittent le 9 aout 2026, ce qui est pire qu'un test franchement rouge.
+ */
+export async function buildAll({ watch = false } = {}) {
+  const contexts = await Promise.all(
+    ['mcpServer', 'cli'].map((name) =>
+      context({ ...common, entryPoints: [`src/${name}.ts`], outfile: `dist/${name}.js` }),
+    ),
+  );
+
+  await Promise.all(contexts.map((ctx) => ctx.rebuild()));
+
+  if (watch) {
+    await Promise.all(contexts.map((ctx) => ctx.watch()));
+    return async () => {
+      await Promise.all(contexts.map((ctx) => ctx.dispose()));
+    };
+  }
+
+  await Promise.all(contexts.map((ctx) => ctx.dispose()));
+  return async () => {};
+}
+
+// Lance directement : `node esbuild.mjs`.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  await buildAll();
 }

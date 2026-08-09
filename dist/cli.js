@@ -4068,7 +4068,14 @@ var configSchema = external_exports.object({
   /** L'autre machine. Une seule : le produit est fait pour deux, pas pour une flotte. */
   peer: machineNameSchema,
   /** Depot Git dedie aux messages. Accepte une URL distante ou un chemin local (pour les tests). */
-  repoUrl: external_exports.string().min(1),
+  /**
+   * Le depot de messages. Interdit de commencer par `-` : cette valeur part en position d'argument
+   * dans `git clone`, et git lit tout argument commencant par un tiret comme une option. Le clone
+   * echoue aujourd'hui avant d'executer quoi que ce soit, parce que le dossier de destination prend
+   * alors la place de l'URL et n'existe pas - mesure le 9 aout 2026. C'est une chance, pas une
+   * protection : le jour ou l'ordre des arguments change, la chance disparait.
+   */
+  repoUrl: external_exports.string().min(1).regex(/^[^-]/, "a repository address must not start with a dash"),
   /**
    * La branche du depot de messages.
    *
@@ -4132,9 +4139,6 @@ var ENV_KEYS = {
   [`${ENV_PREFIX}RETENTION_KEEP`]: "retentionKeep",
   [`${ENV_PREFIX}MAX_MESSAGE_CHARS`]: "maxMessageChars",
   [`${ENV_PREFIX}CATCH_UP_MAX_MESSAGES`]: "catchUpMaxMessages",
-  [`${ENV_PREFIX}CLAUDE_COMMAND`]: "claudeCommand",
-  [`${ENV_PREFIX}WATCH_TOOLS`]: "watchTools",
-  [`${ENV_PREFIX}WATCH_CWD`]: "watchCwd",
   [`${ENV_PREFIX}REPLY_WAIT_SECONDS`]: "replyWaitSeconds",
   [`${ENV_PREFIX}AUTO_WATCH`]: "autoWatch",
   [`${ENV_PREFIX}WATCH_IDLE_SECONDS`]: "watchIdleSeconds"
