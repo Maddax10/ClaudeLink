@@ -16,6 +16,12 @@ const distCli = join(projectRoot, 'dist', 'cli.js');
  * Le seul endroit du projet qui lance le vrai binaire. C'est necessaire : ce qu'on prouve ici est
  * qu'un signal envoye au veilleur emporte la session de reponse qu'il a lancee, et ni un double ni
  * un appel de fonction ne peuvent le montrer - il faut deux vrais processus et un vrai signal.
+ *
+ * **Et ce test ne prouve que la plateforme qui l'execute.** Le defaut qu'il couvre a ete mesure sur
+ * ce Mac le 9 aout 2026 : deux arrets sur trois y laissaient une session orpheline. Sur une vraie
+ * machine Windows, le meme jour, aucune orpheline apres trois arrets - les enfants y mouraient
+ * deja avec leur parent. C'est une difference de propagation du signal, pas un desaccord de mesure.
+ * Vert ici ne dit donc rien de la-bas, et rouge la-bas ne voudrait pas dire que le relais a casse.
  */
 let root: string;
 let mac: Workspace;
@@ -65,6 +71,17 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  // Le dormeur tient dix minutes. Quand ce test echoue - et il echoue precisement quand le veilleur
+  // ne l'emporte pas avec lui - il reste sur la machine bien apres la fin de la suite. Mesure du
+  // 9 aout 2026 : la passe de mutation en a laisse un, retrouve une heure plus tard.
+  try {
+    const stray = Number((await readFile(sleeperPidFile, 'utf8')).trim());
+    if (Number.isInteger(stray) && alive(stray)) {
+      process.kill(stray, 'SIGKILL');
+    }
+  } catch {
+    // Pas de fichier de pid : le faux `claude` n'a jamais demarre, il n'y a rien a nettoyer.
+  }
   await rm(root, { recursive: true, force: true });
 });
 
