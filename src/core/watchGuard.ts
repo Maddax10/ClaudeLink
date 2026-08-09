@@ -13,3 +13,26 @@ import type { Message } from './message.js';
 export function shouldAnswer(message: Message): boolean {
   return message.auto !== true;
 }
+
+/**
+ * Quelqu'un est-il devant l'ecran de cette machine ?
+ *
+ * Le veilleur n'a jamais gene parce qu'il repondait, il a gene parce qu'il repondait **pendant
+ * qu'une fenetre etait ouverte**, en doublant la voix de son proprietaire. Il est en revanche le
+ * seul mecanisme qui parle dans une machine que personne ne regarde - le cas ou son utilisateur
+ * pose une question puis s'en va. D'ou ce garde : se taire quand quelqu'un est la, parler sinon.
+ *
+ * `lastTurnAt` vient d'un fichier ecrit par les hooks de cette machine et `now` de son horloge :
+ * une seule source de temps, donc la soustraction a un sens. Ce ne serait pas le cas contre une
+ * date venue du pair.
+ *
+ * Aucune trace signifie qu'aucune session n'a jamais tourne depuis l'installation : absent, donc.
+ * Se taire dans ce cas rendrait le veilleur muet sur une machine qui n'a jamais ouvert Claude Code,
+ * ce qui est exactement celle ou il sert.
+ */
+export function someoneIsAround(lastTurnAt: number | undefined, now: number, idleSeconds: number): boolean {
+  if (lastTurnAt === undefined) {
+    return false;
+  }
+  return now - lastTurnAt < idleSeconds * 1000;
+}

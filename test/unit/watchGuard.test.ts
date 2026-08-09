@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MESSAGE_VERSION, type Message, parseMessage, serializeMessage } from '../../src/core/message.js';
-import { shouldAnswer } from '../../src/core/watchGuard.js';
+import { shouldAnswer, someoneIsAround } from '../../src/core/watchGuard.js';
 
 const question: Message = {
   v: MESSAGE_VERSION,
@@ -37,5 +37,39 @@ describe('shouldAnswer', () => {
 
     expect('auto' in fromOldVersion).toBe(false);
     expect(shouldAnswer(fromOldVersion)).toBe(true);
+  });
+});
+
+describe('someoneIsAround', () => {
+  const now = 1_760_000_000_000;
+  const tenMinutes = 600;
+
+  it('voit quelqu un quand un tour vient de finir', () => {
+    expect(someoneIsAround(now - 30_000, now, tenMinutes)).toBe(true);
+  });
+
+  it('ne voit personne quand le dernier tour est plus vieux que le seuil', () => {
+    expect(someoneIsAround(now - 601_000, now, tenMinutes)).toBe(false);
+  });
+
+  /**
+   * Le cas qui justifie tout le reglage : poser une question, partir avec son telephone. Sans ce
+   * comportement le veilleur se tairait exactement au moment ou il est le seul a pouvoir parler.
+   */
+  it('ne voit personne apres une vraie absence', () => {
+    expect(someoneIsAround(now - 45 * 60_000, now, tenMinutes)).toBe(false);
+  });
+
+  /**
+   * Aucune trace veut dire qu'aucune session n'a jamais tourne ici. Repondre « quelqu'un est la »
+   * rendrait le veilleur muet sur une machine que personne n'utilise, c'est-a-dire celle ou il sert.
+   */
+  it('ne voit personne quand aucune trace n existe', () => {
+    expect(someoneIsAround(undefined, now, tenMinutes)).toBe(false);
+  });
+
+  it('bascule exactement au seuil, pas avant', () => {
+    expect(someoneIsAround(now - 599_999, now, tenMinutes)).toBe(true);
+    expect(someoneIsAround(now - 600_000, now, tenMinutes)).toBe(false);
   });
 });

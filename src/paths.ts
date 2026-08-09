@@ -21,6 +21,12 @@ export function awaitingPath(home: string): string {
   return join(home, 'awaiting.json');
 }
 
+/** Quand une session de cette machine a bougé pour la derniere fois. C'est le seul signe qu'un
+ *  veilleur a de la presence de quelqu'un devant l'ecran. */
+export function lastTurnPath(home: string): string {
+  return join(home, 'last-turn.json');
+}
+
 export function logPath(home: string): string {
   return join(home, 'claude-link.log');
 }

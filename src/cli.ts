@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { NotConfiguredError, loadApp } from './app.js';
 import { resolveConfig } from './core/config.js';
-import { shouldAnswer } from './core/watchGuard.js';
+import { shouldAnswer, someoneIsAround } from './core/watchGuard.js';
 import { clearAwaiting, readAwaiting } from './deliver/awaiting.js';
+import { markTurn, readLastTurn } from './deliver/presence.js';
 import { renderDeliveries } from './deliver/render.js';
 import { acquireWatchProcess, readWatchProcess, stopWatchProcess } from './deliver/watchProcess.js';
 import { configPath, logPath, resolveHome } from './paths.js';
@@ -193,6 +194,20 @@ async function watch(): Promise<number> {
           continue;
         }
 
+        // Quelqu'un est devant l'ecran : sa session a deja recu ce message par le hook de fin de
+        // tour, et une reponse d'ici parlerait par-dessus la sienne. C'est le seul defaut du
+        // veilleur qui ait vraiment gene, mesure le 9 aout 2026 - trois reponses sans contexte
+        // parties pendant que son proprietaire ecrivait lui-meme.
+        //
+        // Le message est consomme quand meme, et c'est deliberé : le garder en reserve ferait
+        // repondre le veilleur dix minutes plus tard, a une conversation que l'humain a close
+        // entre-temps. Rien n'est perdu - si une session est assez vivante pour nous faire taire,
+        // elle est assez vivante pour avoir recu le message.
+        if (someoneIsAround(await readLastTurn(home), Date.now(), config.watchIdleSeconds)) {
+          await log(`holding back on ${delivery.message.id}: a session is active here`);
+          continue;
+        }
+
         await log(`answering ${delivery.message.id}`);
         const answer = await askClaude(delivery.safeText, config, (child) => {
           answering = child;
@@ -329,6 +344,11 @@ async function hook(args: string[]): Promise<number> {
 
   try {
     const { home, config, workspace } = await loadApp();
+
+    // Les deux hooks sont les seuls endroits ou le produit apprend qu'un humain est devant cet
+    // ecran. C'est cette trace, et rien d'autre, qui empeche l'auto-repondeur de parler par-dessus
+    // lui.
+    await markTurn(home);
 
     if (kind === 'session-start') {
       const result = await workspace.mailbox.receive('session');

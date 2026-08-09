@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,5 +94,20 @@ describe('le hook de fin de tour', () => {
     const stdout = await runHook();
 
     expect(stdout.trim()).toBe('');
+  }, 60_000);
+
+  /**
+   * Le hook est le seul endroit ou le produit apprend qu'un humain est devant l'ecran. Sans cette
+   * trace, l'auto-repondeur parle par-dessus lui - c'est ce qui est arrive trois fois le
+   * 9 aout 2026.
+   */
+  it('laisse une trace horodatee de son passage', async () => {
+    const before = Date.now();
+    await runHook();
+
+    const written = JSON.parse(await readFile(join(windowsHome, 'last-turn.json'), 'utf8')) as { at: number };
+
+    expect(written.at).toBeGreaterThanOrEqual(before);
+    expect(written.at).toBeLessThanOrEqual(Date.now());
   }, 60_000);
 });

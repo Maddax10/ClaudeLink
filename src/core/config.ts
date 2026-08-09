@@ -44,6 +44,15 @@ export const configSchema = z.object({
    * doit demarrer aucun processus chez quelqu'un qui ne l'a pas demande.
    */
   autoWatch: z.boolean().default(false),
+  /**
+   * Combien de temps sans le moindre tour de session avant que l'auto-repondeur se juge seul et
+   * accepte de parler.
+   *
+   * Dix minutes : assez long pour couvrir un tour qui reflechit, assez court pour qu'une vraie
+   * absence soit vue comme telle. Le cas qui justifie tout ce reglage est celui de quelqu'un qui
+   * pose une question puis part avec son telephone.
+   */
+  watchIdleSeconds: z.number().int().min(1).default(600),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -70,6 +79,7 @@ const ENV_KEYS: Readonly<Record<string, keyof Config>> = {
   [`${ENV_PREFIX}WATCH_CWD`]: 'watchCwd',
   [`${ENV_PREFIX}REPLY_WAIT_SECONDS`]: 'replyWaitSeconds',
   [`${ENV_PREFIX}AUTO_WATCH`]: 'autoWatch',
+  [`${ENV_PREFIX}WATCH_IDLE_SECONDS`]: 'watchIdleSeconds',
 };
 
 const NUMERIC_KEYS = new Set<keyof Config>([
@@ -78,6 +88,7 @@ const NUMERIC_KEYS = new Set<keyof Config>([
   'maxMessageChars',
   'catchUpMaxMessages',
   'replyWaitSeconds',
+  'watchIdleSeconds',
 ]);
 
 const BOOLEAN_KEYS = new Set<keyof Config>(['autoWatch']);
