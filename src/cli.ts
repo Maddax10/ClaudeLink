@@ -308,8 +308,20 @@ async function askClaude(
  * Les deux points ou du courrier entre dans une session.
  *
  * `session-start` livre ce qui est arrive pendant que la machine etait eteinte ou fermee.
- * `stop` ne fait rien tant qu'aucune question n'attend de reponse : sinon chaque fin de tour de
- * chaque session paierait un appel reseau pour rien.
+ *
+ * `stop` regarde a **chaque** fin de tour, et pas seulement quand une question attend une reponse.
+ * La version precedente economisait un appel reseau par tour, et le prix etait invisible : une
+ * session occupee a coder ne recevait jamais rien, puisqu'elle n'avait pose aucune question. Le
+ * message restait dans la boite jusqu'a la prochaine ouverture de session. Mesure le 9 aout 2026 :
+ * un avertissement envoye au moment ou il servait n'a jamais ete lu par ce chemin, et il a fallu
+ * ouvrir le fichier JSON du depot a la main.
+ *
+ * L'attente, elle, reste conditionnee : on ne bloque la fin du tour que si on a pose une question.
+ * Sinon on regarde une fois et on rend la main - la difference entre « ne rien rater » et
+ * « immobiliser la session de quelqu'un qui n'attend rien ».
+ *
+ * Ce que ca ne fait pas, et rien ne peut le faire : reveiller une session qui ne fait rien. Un hook
+ * ne s'execute qu'a la fin d'un tour ; sans tour, pas de hook. Le courrier attend le geste suivant.
  */
 async function hook(args: string[]): Promise<number> {
   const kind = args[0];
@@ -330,12 +342,9 @@ async function hook(args: string[]): Promise<number> {
     }
 
     if (kind === 'stop') {
-      const awaiting = await readAwaiting(home);
-      if (awaiting === undefined) {
-        return 0;
-      }
+      const waiting = (await readAwaiting(home)) !== undefined;
+      const deadline = Date.now() + (waiting ? config.replyWaitSeconds * 1000 : 0);
 
-      const deadline = Date.now() + config.replyWaitSeconds * 1000;
       for (;;) {
         const result = await workspace.mailbox.receive('session');
         const context = renderDeliveries(result, config.peer);
