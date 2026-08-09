@@ -35,6 +35,15 @@ export const configSchema = z.object({
   watchCwd: z.string().default(''),
   /** Combien de temps la session attend une reponse apres avoir pose une question. */
   replyWaitSeconds: z.number().int().min(1).max(300).default(25),
+  /**
+   * Demarrer l'auto-repondeur avec le serveur MCP, s'il n'en tourne pas deja.
+   *
+   * Faux par defaut, et ce n'est pas de la prudence de facade : le serveur MCP demarre avec
+   * **chaque** session Claude Code, donc l'activer fait tourner un processus qui repond tout seul
+   * a la machine d'en face, y compris pendant qu'on travaille sur autre chose. Mettre a jour ne
+   * doit demarrer aucun processus chez quelqu'un qui ne l'a pas demande.
+   */
+  autoWatch: z.boolean().default(false),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -60,6 +69,7 @@ const ENV_KEYS: Readonly<Record<string, keyof Config>> = {
   [`${ENV_PREFIX}WATCH_TOOLS`]: 'watchTools',
   [`${ENV_PREFIX}WATCH_CWD`]: 'watchCwd',
   [`${ENV_PREFIX}REPLY_WAIT_SECONDS`]: 'replyWaitSeconds',
+  [`${ENV_PREFIX}AUTO_WATCH`]: 'autoWatch',
 };
 
 const NUMERIC_KEYS = new Set<keyof Config>([
@@ -69,6 +79,25 @@ const NUMERIC_KEYS = new Set<keyof Config>([
   'catchUpMaxMessages',
   'replyWaitSeconds',
 ]);
+
+const BOOLEAN_KEYS = new Set<keyof Config>(['autoWatch']);
+
+/**
+ * Une variable d'environnement est toujours une chaine ; sans cette conversion, `AUTO_WATCH=true`
+ * arriverait a zod comme `"true"` et serait refuse.
+ *
+ * Ce qui n'est pas reconnu repart tel quel plutot que de valoir « faux » : zod refusera alors en
+ * nommant la cle, ce qui vaut mieux que de deviner l'inverse de ce qu'on demandait pour un `yes`.
+ */
+function coerce(key: keyof Config, raw: string): unknown {
+  if (NUMERIC_KEYS.has(key)) {
+    return Number(raw);
+  }
+  if (BOOLEAN_KEYS.has(key)) {
+    return raw === 'true' || raw === '1' ? true : raw === 'false' || raw === '0' ? false : raw;
+  }
+  return raw;
+}
 
 /**
  * L'environnement l'emporte sur le fichier, qui l'emporte sur les defauts. L'environnement est
@@ -84,7 +113,7 @@ export function resolveConfig(sources: ConfigSources = {}): Config {
     if (raw === undefined || raw === '') {
       continue;
     }
-    merged[configKey] = NUMERIC_KEYS.has(configKey) ? Number(raw) : raw;
+    merged[configKey] = coerce(configKey, raw);
   }
 
   const config = configSchema.parse(merged);

@@ -82,6 +82,31 @@ describe('un message va d une machine a l autre', () => {
   });
 });
 
+describe('le marqueur de reponse automatique', () => {
+  /**
+   * Le garde de l'auto-repondeur (`shouldAnswer`) lit ce champ sur le message qui revient du depot,
+   * pas sur celui qu'on a construit. Ce test est donc le seul qui prouve que le garde peut jouer :
+   * sans lui, le champ pourrait etre perdu a l'ecriture et deux veilleurs se repondraient sans fin.
+   */
+  it('traverse le depot et arrive intact chez l autre machine', async () => {
+    await mac.mailbox.send('une reponse ecrite par le veilleur', { auto: true });
+
+    const received = await win.mailbox.receive('session');
+    const delivered = received.deliveries.find((d) => d.safeText.includes('ecrite par le veilleur'));
+
+    expect(delivered?.message.auto).toBe(true);
+  });
+
+  it('est absent quand une session ecrit elle-meme', async () => {
+    await mac.mailbox.send('une question posee a la main');
+
+    const received = await win.mailbox.receive('session');
+    const delivered = received.deliveries.find((d) => d.safeText.includes('posee a la main'));
+
+    expect(delivered?.message.auto).toBeUndefined();
+  });
+});
+
 describe('les deux machines poussent en meme temps', () => {
   it('ne perd aucun message', async () => {
     await Promise.all([

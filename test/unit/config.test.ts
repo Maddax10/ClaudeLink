@@ -12,6 +12,24 @@ describe('resolveConfig', () => {
     expect(config.retentionKeep).toBe(500);
     expect(config.maxMessageChars).toBe(20_000);
     expect(config.catchUpMaxMessages).toBe(20);
+    // Mettre a jour ne doit demarrer de veilleur chez personne : il faut le demander.
+    expect(config.autoWatch).toBe(false);
+  });
+
+  /**
+   * Une variable d'environnement est toujours une chaine. Sans conversion, `AUTO_WATCH=true`
+   * arriverait a zod comme `"true"` et serait refuse - le reglage ne marcherait que par le fichier,
+   * en silence.
+   */
+  it('lit un booleen depuis l environnement, dans ses deux ecritures', () => {
+    expect(resolveConfig({ file: minimal, env: { CLAUDE_LINK_AUTO_WATCH: 'true' } }).autoWatch).toBe(true);
+    expect(resolveConfig({ file: minimal, env: { CLAUDE_LINK_AUTO_WATCH: '1' } }).autoWatch).toBe(true);
+    expect(resolveConfig({ file: minimal, env: { CLAUDE_LINK_AUTO_WATCH: 'false' } }).autoWatch).toBe(false);
+    expect(resolveConfig({ file: minimal, env: { CLAUDE_LINK_AUTO_WATCH: '0' } }).autoWatch).toBe(false);
+  });
+
+  it('refuse un booleen qu il ne comprend pas, au lieu de le prendre pour faux', () => {
+    expect(() => resolveConfig({ file: minimal, env: { CLAUDE_LINK_AUTO_WATCH: 'yes' } })).toThrow();
   });
 
   it('laisse l environnement l emporter sur le fichier', () => {

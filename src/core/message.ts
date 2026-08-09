@@ -1,8 +1,17 @@
 import { z } from 'zod';
 import { machineNameSchema } from './names.js';
 
-/** Toute evolution de la forme d'un message incremente ceci : une machine qui lit une version
- *  qu'elle ne connait pas doit refuser le message, pas le deviner. */
+/**
+ * Toute evolution de la forme d'un message incremente ceci : une machine qui lit une version
+ * qu'elle ne connait pas doit refuser le message, pas le deviner.
+ *
+ * `auto` est l'exception, et il faut savoir pourquoi avant de « corriger » cette ligne. Mesure sur
+ * ce Mac le 9 aout 2026, zod 3.25.76 : un champ inconnu passe `parse()` sans lever et disparait
+ * simplement du resultat. Une machine restee sur l'ancien code lit donc nos messages normalement.
+ * Incrementer ferait l'inverse - le test « refuse une version qu il ne connait pas » prouve qu'elle
+ * les REJETTERAIT tous, y compris celui qui lui demande de se mettre a jour. Le canal se couperait
+ * lui-meme, et il n'y aurait plus de chemin pour le reparer.
+ */
 export const MESSAGE_VERSION = 1;
 
 export const messageSchema = z.object({
@@ -12,6 +21,9 @@ export const messageSchema = z.object({
   to: machineNameSchema,
   at: z.string().datetime({ offset: false }),
   text: z.string().min(1),
+  /** Present uniquement quand c'est l'auto-repondeur qui ecrit. C'est ce qui empeche deux
+   *  auto-repondeurs de se repondre sans fin - voir `shouldAnswer` dans core/watchGuard.ts. */
+  auto: z.literal(true).optional(),
 });
 
 export type Message = z.infer<typeof messageSchema>;

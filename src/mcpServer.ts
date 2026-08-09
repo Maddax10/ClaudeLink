@@ -1,10 +1,14 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { loadApp } from './app.js';
+import { loadApp, loadConfig } from './app.js';
 import { markAwaiting } from './deliver/awaiting.js';
 import { renderDeliveries } from './deliver/render.js';
+import { readWatchProcess } from './deliver/watchProcess.js';
 
 /**
  * Un serveur MCP ordinaire, deliberement : deux outils, rien qui pousse.
@@ -76,4 +80,34 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
   throw new Error(`unknown tool: ${request.params.name}`);
 });
 
+/**
+ * Demarre l'auto-repondeur avec la session, si le reglage le demande et qu'il n'en tourne pas deja.
+ *
+ * **Detache**, parce qu'il doit survivre a la fermeture de la fenetre : un veilleur qui meurt avec
+ * sa session ne repondrait que dans les moments ou quelqu'un est deja devant l'ecran, c'est-a-dire
+ * exactement quand on n'a pas besoin de lui.
+ *
+ * **`stdio: 'ignore'` n'est pas de la proprete** : la sortie standard de ce processus-ci porte le
+ * protocole MCP. Un enfant qui heriterait de stdout y ecrirait ses lignes de journal au milieu du
+ * JSON-RPC et couperait `send_to_peer` pour toute la session.
+ *
+ * Et rien ici ne peut faire echouer le demarrage du serveur - d'ou le catch muet. Un serveur MCP
+ * qui ne demarre pas, c'est `send_to_peer` qui disparait de la session sans explication, et ce
+ * symptome-la a coute une journee de diagnostic sur l'autre machine le 9 aout 2026.
+ */
+async function startWatcherIfAsked(): Promise<void> {
+  try {
+    const { home, config } = await loadConfig();
+    if (!config.autoWatch || (await readWatchProcess(home)) !== undefined) {
+      return;
+    }
+    const cliPath = join(dirname(fileURLToPath(import.meta.url)), 'cli.js');
+    spawn(process.execPath, [cliPath, 'watch'], { detached: true, stdio: 'ignore' }).unref();
+  } catch {
+    // Muet par construction : il n'y a pas de canal pour se plaindre ici, et le veilleur est un
+    // confort. Son absence se lit dans `doctor`, qui dit s'il tourne.
+  }
+}
+
+await startWatcherIfAsked();
 await mcp.connect(new StdioServerTransport());

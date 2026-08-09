@@ -57,4 +57,32 @@ describe('parseMessage', () => {
   it('refuse un identifiant qui n est pas 12 caracteres hexadecimaux', () => {
     expect(() => parseMessage(JSON.stringify({ ...valid, id: 'nope' }))).toThrow();
   });
+
+  /**
+   * C'est ce qui autorise `MESSAGE_VERSION` a rester a 1 quand on ajoute un champ. Mesure du
+   * 9 aout 2026 : zod retire un champ inconnu au lieu de lever, donc une machine restee sur
+   * l'ancien code continue de lire nos messages. Si ce test tombe un jour, ajouter un champ
+   * devient une rupture, et il faudra mettre les deux machines a jour AVANT d'en envoyer un.
+   */
+  it('tolere un champ qu il ne connait pas, au lieu de refuser le message', () => {
+    const fromNewerVersion = JSON.stringify({ ...valid, futureField: 'quelque chose' });
+
+    expect(() => parseMessage(fromNewerVersion)).not.toThrow();
+    expect(parseMessage(fromNewerVersion)).toEqual(valid);
+  });
+
+  it('fait un aller-retour sans perte avec le marqueur de reponse automatique', () => {
+    const auto = { ...valid, auto: true } as const;
+
+    expect(parseMessage(serializeMessage(auto))).toEqual(auto);
+  });
+
+  it('n ecrit pas le marqueur quand l envoi est ordinaire', () => {
+    expect(serializeMessage(valid)).not.toContain('auto');
+  });
+
+  it('refuse un marqueur qui vaudrait autre chose que vrai', () => {
+    expect(() => parseMessage(JSON.stringify({ ...valid, auto: false }))).toThrow();
+    expect(() => parseMessage(JSON.stringify({ ...valid, auto: 'oui' }))).toThrow();
+  });
 });

@@ -52,6 +52,12 @@ export interface ReceiveResult {
 
 const PUSH_ATTEMPTS = 5;
 
+export interface SendOptions {
+  /** Vrai seulement quand l'auto-repondeur ecrit. Marque le message pour que l'auto-repondeur
+   *  d'en face ne lui reponde pas - voir core/watchGuard.ts. */
+  readonly auto?: boolean;
+}
+
 export class Mailbox {
   constructor(
     private readonly repo: GitRepo,
@@ -90,12 +96,12 @@ export class Mailbox {
    * reprend alors depuis l'etat distant et on **reecrit** le fichier, plutot que de rebaser :
    * la sequence reste idempotente et aucun message ne se perd.
    */
-  async send(text: string): Promise<Message> {
+  async send(text: string, options: SendOptions = {}): Promise<Message> {
     assertSendable(text, this.config.maxMessageChars);
-    return this.lock.withLock(() => this.sendLocked(text));
+    return this.lock.withLock(() => this.sendLocked(text, options));
   }
 
-  private async sendLocked(text: string): Promise<Message> {
+  private async sendLocked(text: string, options: SendOptions): Promise<Message> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt += 1) {
       const message: Message = {
@@ -105,6 +111,9 @@ export class Mailbox {
         to: this.config.peer,
         at: new Date().toISOString(),
         text,
+        // La clef est absente plutot que fausse quand l'envoi est humain : un message ordinaire
+        // garde exactement la forme qu'il avait avant ce champ.
+        ...(options.auto === true ? { auto: true as const } : {}),
       };
 
       try {

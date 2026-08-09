@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { NotConfiguredError, loadApp } from './app.js';
 import { resolveConfig } from './core/config.js';
+import { shouldAnswer } from './core/watchGuard.js';
 import { clearAwaiting, readAwaiting } from './deliver/awaiting.js';
 import { renderDeliveries } from './deliver/render.js';
+import { acquireWatchProcess, readWatchProcess, stopWatchProcess } from './deliver/watchProcess.js';
 import { configPath, logPath, resolveHome } from './paths.js';
 
 const execFileAsync = promisify(execFile);
@@ -22,7 +24,7 @@ async function main(argv: string[]): Promise<number> {
     case 'inbox':
       return inbox();
     case 'watch':
-      return watch();
+      return rest.includes('--stop') ? stopWatch() : watch();
     case 'prune':
       return prune();
     case 'hook':
@@ -41,6 +43,7 @@ const USAGE = `claude-link - a message channel between two machines
   send [text]                                        send a message (or pipe it on stdin)
   inbox                                              show new messages for this machine
   watch                                              answer incoming messages with claude -p
+  watch --stop                                       stop the watcher running on this machine
   prune                                              drop old messages, keeping the newest
   hook session-start                                 hook handler: deliver mail at session start
   hook stop                                          hook handler: deliver mail at end of turn
@@ -142,6 +145,14 @@ async function watch(): Promise<number> {
     await appendFile(logPath(home), `${new Date().toISOString()} ${line}\n`, 'utf8');
   };
 
+  // Deux veilleurs sur la meme machine repondraient chacun a chaque message, sans jamais se voir :
+  // le pair recevrait deux reponses a chaque question et paierait deux sessions.
+  const claim = await acquireWatchProcess(home);
+  if (!claim.ok) {
+    process.stderr.write(`a claude-link watcher is already running here (pid ${claim.heldBy})\n`);
+    return 1;
+  }
+
   await log(`watch started as "${config.machineName}", answering "${config.peer}"`);
   process.stdout.write(`watching as "${config.machineName}" (Ctrl-C to stop)\n`);
 
@@ -152,17 +163,27 @@ async function watch(): Promise<number> {
       backoff = config.pollSeconds;
 
       for (const delivery of result.deliveries) {
+        // Repondre a une reponse automatique, c'est la boucle sans fin : l'autre veilleur repondra
+        // a celle-ci, et ainsi de suite, chaque tour coutant une session `claude -p` des deux cotes.
+        if (!shouldAnswer(delivery.message)) {
+          await log(`skipping auto message ${delivery.message.id}`);
+          continue;
+        }
+
         await log(`answering ${delivery.message.id}`);
         const answer = await askClaude(delivery.safeText, config);
         if (answer.ok) {
-          await workspace.mailbox.send(answer.text);
+          await workspace.mailbox.send(answer.text, { auto: true });
           await log(`answered ${delivery.message.id}`);
         } else {
           // Le pair doit savoir qu'il n'aura pas de reponse, sinon il attend pour rien. Mais ce
           // message dit qu'il n'en est pas une, en une ligne, et sans recopier quoi que ce soit.
+          // Marque `auto` comme les autres : un echec qui relancerait l'autre veilleur ferait
+          // exactement la boucle, avec en prime deux sessions qui echouent en boucle.
           await workspace.mailbox.send(
             `[claude-link] Pas de reponse a ta question : la session qui devait repondre a echoue (${answer.cause}). ` +
               `Ceci est un avis automatique, personne ne l'a ecrit. Repose ta question, ou attends qu'une session s'ouvre a la main.`,
+            { auto: true },
           );
           await log(`answer failed for ${delivery.message.id}: ${answer.cause}`);
         }
@@ -174,6 +195,21 @@ async function watch(): Promise<number> {
     }
     await delay(backoff * 1000);
   }
+}
+
+/**
+ * Sans ca, un veilleur demarre par le serveur MCP est un processus que personne ne sait retrouver :
+ * il n'a pas de fenetre, et son nom dans la liste des processus est celui de node.
+ */
+async function stopWatch(): Promise<number> {
+  const home = resolveHome();
+  const pid = await stopWatchProcess(home);
+  if (pid === undefined) {
+    process.stdout.write('no claude-link watcher was running here\n');
+    return 0;
+  }
+  process.stdout.write(`stopped the claude-link watcher (pid ${pid})\n`);
+  return 0;
 }
 
 type Answer = { ok: true; text: string } | { ok: false; cause: string };
@@ -305,6 +341,12 @@ async function doctor(): Promise<number> {
     const { home, config, workspace } = await loadApp();
     lines.push(`config: ${configPath(home)}`);
     lines.push(`machine: ${config.machineName} -> ${config.peer}`);
+    const watcher = await readWatchProcess(home);
+    lines.push(
+      watcher === undefined
+        ? `watcher: none running (autoWatch: ${String(config.autoWatch)})`
+        : `watcher: pid ${watcher.pid}, started ${watcher.startedAt} (stop it with: watch --stop)`,
+    );
     await workspace.repo.fetch();
     lines.push(`repo: reachable, head ${(await workspace.repo.remoteHead()).slice(0, 8)}`);
     await workspace.mailbox.assertMailbox();
