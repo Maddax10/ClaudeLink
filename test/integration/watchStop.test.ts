@@ -22,13 +22,45 @@ const distCli = join(projectRoot, 'dist', 'cli.js');
  * machine Windows, le meme jour, aucune orpheline apres trois arrets - les enfants y mouraient
  * deja avec leur parent. C'est une difference de propagation du signal, pas un desaccord de mesure.
  * Vert ici ne dit donc rien de la-bas, et rouge la-bas ne voudrait pas dire que le relais a casse.
+ *
+ * D'ou la sonde ci-dessous. Le faux `claude` est un script a shebang rendu executable par son bit
+ * de permission : Windows n'a ni l'un ni l'autre, `execFile` y rend `ENOENT`, et le test attendait
+ * trente secondes un fichier que personne n'ecrirait, pour finir sur « condition still false after
+ * 30000 ms ». Ce message accuse le mecanisme d'arret alors que la cause est le faux binaire - un
+ * outil dont le verdict depend d'une entree qu'il n'a pas verifiee doit nommer sa propre cause
+ * avant d'accuser autre chose. Mesure sur une vraie machine Windows le 9 aout 2026.
+ *
+ * La sonde lance vraiment le fichier au lieu de tester `process.platform` : ce qui compte n'est pas
+ * le nom du systeme, c'est de savoir si cette forme d'executable demarre ici.
  */
 let root: string;
 let mac: Workspace;
 let watcherHome: string;
 let sleeperPidFile: string;
 
+const shebangScriptsRun = await canRunShebangScript();
+
+/** Un script a shebang, rendu executable, demarre-t-il sur cette machine ? Mesure a l'execution. */
+async function canRunShebangScript(): Promise<boolean> {
+  const probeDir = await mkdtemp(join(tmpdir(), 'clink-probe-'));
+  const probe = join(probeDir, 'probe');
+  try {
+    await writeFile(probe, '#!/usr/bin/env node\nprocess.exit(0);\n', 'utf8');
+    await chmod(probe, 0o755);
+    await execFileAsync(probe, []);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(probeDir, { recursive: true, force: true });
+  }
+}
+
 beforeAll(async () => {
+  if (!shebangScriptsRun) {
+    return;
+  }
+
   // Un garde qui juge un artefact plus vieux que ses entrees ne juge rien, et il *passe*, ce qui
   // est pire qu'echouer. Local uniquement : `dist/` est gitignore, donc jamais horodate par un
   // clone, et ce projet n'a pas de CI ou la comparaison serait fausse.
@@ -71,6 +103,9 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  if (root === undefined) {
+    return;
+  }
   // Le dormeur tient dix minutes. Quand ce test echoue - et il echoue precisement quand le veilleur
   // ne l'emporte pas avec lui - il reste sur la machine bien apres la fin de la suite. Mesure du
   // 9 aout 2026 : la passe de mutation en a laisse un, retrouve une heure plus tard.
@@ -86,7 +121,9 @@ afterAll(async () => {
 });
 
 describe('watch --stop', () => {
-  it('emporte la session de reponse en cours avec le veilleur', async () => {
+  // Saute plutot qu'echoue quand le faux `claude` ne peut pas demarrer ici : un rouge dirait « le
+  // veilleur n'emporte pas sa session », ce qui serait une accusation sans mesure.
+  it.runIf(shebangScriptsRun)('emporte la session de reponse en cours avec le veilleur', async () => {
     await mac.mailbox.send('une question qui va occuper le veilleur');
 
     const env = { ...process.env, CLAUDE_LINK_HOME: watcherHome, SLEEPER_PID_FILE: sleeperPidFile };
