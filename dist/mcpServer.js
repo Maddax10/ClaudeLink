@@ -18332,7 +18332,11 @@ var GitRepo = class {
       const { stdout } = await execFileAsync("git", [...args], {
         cwd: this.dir,
         env: gitEnv(),
-        maxBuffer: 32 * 1024 * 1024
+        maxBuffer: 32 * 1024 * 1024,
+        // Sans ceci, Windows ouvre une fenetre de console a chaque lancement. Le veilleur appelle
+        // git toutes les `pollSeconds`, et le hook de fin de tour a chaque tour de chaque fenetre :
+        // ca clignote en permanence sur l'ecran de quelqu'un qui travaille. Sans effet ailleurs.
+        windowsHide: true
       });
       return stdout;
     } catch (error2) {
@@ -19049,7 +19053,7 @@ function message(error2) {
   return String(failure.stderr ?? failure.message ?? error2);
 }
 async function ghRun(args) {
-  const { stdout } = await execFileAsync2("gh", [...args], { maxBuffer: 4 * 1024 * 1024 });
+  const { stdout } = await execFileAsync2("gh", [...args], { maxBuffer: 4 * 1024 * 1024, windowsHide: true });
   return stdout;
 }
 
@@ -19260,7 +19264,7 @@ async function startWatcherIfAsked() {
       return;
     }
     const cliPath = join8(dirname3(fileURLToPath2(import.meta.url)), "cli.js");
-    spawn(process.execPath, [cliPath, "watch"], { detached: true, stdio: "ignore" }).unref();
+    spawn(process.execPath, [cliPath, "watch"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } catch {
   }
 }

@@ -52,6 +52,10 @@ export class GitRepo {
         cwd: this.dir,
         env: gitEnv(),
         maxBuffer: 32 * 1024 * 1024,
+        // Sans ceci, Windows ouvre une fenetre de console a chaque lancement. Le veilleur appelle
+        // git toutes les `pollSeconds`, et le hook de fin de tour a chaque tour de chaque fenetre :
+        // ca clignote en permanence sur l'ecran de quelqu'un qui travaille. Sans effet ailleurs.
+        windowsHide: true,
       });
       return stdout;
     } catch (error) {

@@ -178,7 +178,7 @@ async function startWatcherIfAsked(): Promise<void> {
       return;
     }
     const cliPath = join(dirname(fileURLToPath(import.meta.url)), 'cli.js');
-    spawn(process.execPath, [cliPath, 'watch'], { detached: true, stdio: 'ignore' }).unref();
+    spawn(process.execPath, [cliPath, 'watch'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   } catch {
     // Muet par construction : il n'y a pas de canal pour se plaindre ici, et le veilleur est un
     // confort. Son absence se lit dans `doctor`, qui dit s'il tourne.

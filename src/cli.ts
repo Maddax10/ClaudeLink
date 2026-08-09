@@ -282,6 +282,7 @@ async function askClaude(
       {
         cwd: config.watchCwd === '' ? process.cwd() : config.watchCwd,
         maxBuffer: 8 * 1024 * 1024,
+        windowsHide: true,
         // 15 minutes, et le chiffre vient d'une mesure : avec 300_000, les douze echecs du
         // 9 aout 2026 tombaient TOUS entre 303 et 320 secondes. Ce n'etaient pas des pannes, c'etaient
         // des reponses tuees en cours d'ecriture. Le delai median d'une reponse reussie ce jour-la
@@ -383,7 +384,7 @@ async function hook(args: string[]): Promise<number> {
 async function doctor(): Promise<number> {
   const lines: string[] = [];
   try {
-    const { stdout } = await execFileAsync('git', ['--version']);
+    const { stdout } = await execFileAsync('git', ['--version'], { windowsHide: true });
     lines.push(`git: ${stdout.trim()}`);
   } catch {
     lines.push('git: NOT FOUND on PATH');

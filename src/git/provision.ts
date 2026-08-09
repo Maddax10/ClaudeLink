@@ -110,6 +110,6 @@ async function ghRun(args: readonly string[]): Promise<string> {
   // `gitEnv()`. Son jeton vit dans le trousseau du systeme et il lui faut plus que git pour l'y
   // trouver. C'est un choix constate, pas un oubli : une allowlist demanderait de savoir ce que
   // `gh` lit, et personne ici ne le sait encore.
-  const { stdout } = await execFileAsync('gh', [...args], { maxBuffer: 4 * 1024 * 1024 });
+  const { stdout } = await execFileAsync('gh', [...args], { maxBuffer: 4 * 1024 * 1024, windowsHide: true });
   return stdout;
 }
