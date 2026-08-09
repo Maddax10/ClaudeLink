@@ -1,0 +1,20 @@
+{
+  "name": "claude-link",
+  "owner": {
+    "name": "Maddax10"
+  },
+  "plugins": [
+    {
+      "name": "claude-link",
+      "source": ".",
+      "description": "Un canal entre deux machines, par un depot Git prive que vous possedez.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Maddax10"
+      },
+      "category": "mcp",
+      "homepage": "https://github.com/Maddax10/ClaudeLink",
+      "keywords": ["mcp", "sync", "machines", "git"]
+    }
+  ]
+}

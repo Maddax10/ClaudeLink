@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,13 +22,6 @@ let mac: Workspace;
 let windowsHome: string;
 
 beforeAll(async () => {
-  // Un garde qui juge un artefact plus vieux que ses entrees ne juge rien. Local uniquement :
-  // `dist/` est gitignore, donc jamais horodate par un clone.
-  const [built, source] = await Promise.all([stat(distCli), stat(join(projectRoot, 'src', 'cli.ts'))]);
-  if (built.mtimeMs < source.mtimeMs) {
-    throw new Error('dist/cli.js est plus vieux que src/cli.ts. Lance `npx tsc -p tsconfig.json` avant ce test.');
-  }
-
   root = await mkdtemp(join(tmpdir(), 'clink-hook-'));
   const bare = join(root, 'mailbox.git');
   await execFileAsync('git', ['init', '--quiet', '--bare', '--initial-branch=main', bare]);

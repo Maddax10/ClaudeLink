@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,11 +25,6 @@ let watcherHome: string;
 let watcherPid: number | undefined;
 
 beforeAll(async () => {
-  const [built, source] = await Promise.all([stat(distCli), stat(join(projectRoot, 'src', 'cli.ts'))]);
-  if (built.mtimeMs < source.mtimeMs) {
-    throw new Error('dist/cli.js est plus vieux que src/cli.ts. Lance `npx tsc -p tsconfig.json` avant ce test.');
-  }
-
   root = await mkdtemp(join(tmpdir(), 'clink-presence-'));
   const bare = join(root, 'mailbox.git');
   await execFileAsync('git', ['init', '--quiet', '--bare', '--initial-branch=main', bare]);

@@ -1,0 +1,10 @@
+{
+  "name": "claude-link",
+  "description": "Un canal entre deux machines : chaque session peut ecrire a l'autre ordinateur et recevoir sa reponse, par un depot Git prive que vous possedez. Aucun serveur tiers, aucun compte a creer.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Maddax10"
+  },
+  "homepage": "https://github.com/Maddax10/ClaudeLink",
+  "keywords": ["mcp", "sync", "machines", "git"]
+}
