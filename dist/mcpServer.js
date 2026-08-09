@@ -6915,8 +6915,8 @@ var require_dist = __commonJS({
 
 // src/mcpServer.ts
 import { spawn } from "node:child_process";
-import { dirname as dirname2, join as join6 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname as dirname3, join as join8 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -18191,7 +18191,7 @@ function awaitingPath(home) {
 }
 
 // src/workspace.ts
-import { mkdir as mkdir3, readFile as readFile2, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile2, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join4 } from "node:path";
 
 // src/git/lock.ts
@@ -18758,6 +18758,12 @@ async function openWorkspace(workDir, config2) {
   await mkdir3(workDir, { recursive: true });
   await mkdir3(hooksDir, { recursive: true });
   const repo = new GitRepo(repoDir, config2.branch);
+  if (await exists(join4(repoDir, ".git"))) {
+    const current = await currentRemote(repo);
+    if (current !== config2.repoUrl) {
+      await rm3(repoDir, { recursive: true, force: true });
+    }
+  }
   if (!await exists(join4(repoDir, ".git"))) {
     await cloneInto(workDir, repoDir, config2);
   }
@@ -18765,6 +18771,13 @@ async function openWorkspace(workDir, config2) {
   await bootstrapIfEmpty(repo, repoDir, config2);
   const mailbox = new Mailbox(repo, repoDir, workDir, config2, new OperationLock(workDir));
   return { config: config2, workDir, repoDir, repo, mailbox };
+}
+async function currentRemote(repo) {
+  try {
+    return (await repo.run(["config", "--get", "remote.origin.url"])).trim();
+  } catch {
+    return void 0;
+  }
 }
 async function cloneInto(workDir, repoDir, config2) {
   const parent = new GitRepo(workDir, config2.branch);
@@ -18774,17 +18787,19 @@ async function bootstrapIfEmpty(repo, repoDir, config2) {
   if (await exists(join4(repoDir, MAILBOX_MARKER))) {
     return;
   }
-  try {
+  const refs = (await repo.run(["ls-remote", "origin"])).trim();
+  if (refs.length > 0) {
+    if (!refs.split("\n").some((line) => line.endsWith(`refs/heads/${config2.branch}`))) {
+      throw new Error(
+        `${config2.repoUrl} has no branch "${config2.branch}". This repository is not empty, so nothing was written to it. Point the channel at the right branch, or at an empty repository.`
+      );
+    }
     await repo.fetch();
     await repo.resetHardToRemote();
     if (await exists(join4(repoDir, MAILBOX_MARKER))) {
       return;
     }
     throw new NotAMailboxError(repoDir);
-  } catch (error2) {
-    if (error2 instanceof NotAMailboxError) {
-      throw error2;
-    }
   }
   await writeFile3(join4(repoDir, MAILBOX_MARKER), mailboxMarkerContent(), "utf8");
   await writeFile3(join4(repoDir, ".gitattributes"), GITATTRIBUTES, "utf8");
@@ -18837,7 +18852,7 @@ async function loadApp(env = process.env) {
 }
 
 // src/deliver/awaiting.ts
-import { readFile as readFile4, rm as rm3, writeFile as writeFile4 } from "node:fs/promises";
+import { readFile as readFile4, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
 var awaitingSchema = external_exports.object({
   /** Horodatage local, en millisecondes, au-dela duquel on cesse d'attendre. */
   until: external_exports.number().int().positive(),
@@ -18877,7 +18892,7 @@ function renderDeliveries(result, peer) {
 
 // src/deliver/watchProcess.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile5, rm as rm4, writeFile as writeFile5 } from "node:fs/promises";
+import { readFile as readFile5, rm as rm5, writeFile as writeFile5 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
 var recordSchema = external_exports.object({
@@ -18907,7 +18922,36 @@ function isAlive(pid) {
 }
 
 // src/setup.ts
-import { mkdir as mkdir4, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
+import { mkdir as mkdir4, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
+import { dirname as dirname2, join as join7 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// src/deliver/attempts.ts
+import { readFile as readFile6, rm as rm6, writeFile as writeFile6 } from "node:fs/promises";
+import { join as join6 } from "node:path";
+var attemptsSchema = external_exports.object({ count: external_exports.number().int().min(0) });
+function attemptsPath(home) {
+  return join6(home, "create-attempts.json");
+}
+async function countAttempt(home) {
+  const next = await readAttempts(home) + 1;
+  try {
+    await writeFile6(attemptsPath(home), `${JSON.stringify({ count: next })}
+`, "utf8");
+  } catch {
+  }
+  return next;
+}
+async function readAttempts(home) {
+  try {
+    return attemptsSchema.parse(JSON.parse(await readFile6(attemptsPath(home), "utf8"))).count;
+  } catch {
+    return 0;
+  }
+}
+async function clearAttempts(home) {
+  await rm6(attemptsPath(home), { force: true });
+}
 
 // src/deliver/installHint.ts
 var COMMANDS = {
@@ -18953,7 +18997,8 @@ Pour l'installer :
 import { execFile as execFile2 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
 var execFileAsync2 = promisify2(execFile2);
-var REPO_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+var SEGMENT = "[A-Za-z0-9][A-Za-z0-9._-]{0,99}";
+var REPO_NAME_PATTERN = new RegExp(`^${SEGMENT}(?:/${SEGMENT})?$`);
 function isRepoName(value) {
   return REPO_NAME_PATTERN.test(value);
 }
@@ -18989,7 +19034,7 @@ function classify(error2, mode) {
   if (mode === "create" && (text.includes("already exists") || text.includes("name already"))) {
     return "name-taken";
   }
-  if (mode === "use") {
+  if (mode === "use" && (text.includes("could not resolve") || text.includes("not found") || text.includes("404"))) {
     return "not-found";
   }
   return "failed";
@@ -19020,8 +19065,6 @@ async function configureChannel(request) {
     return { ok: false, cause: "invalid", detail: describe(error2) };
   }
   await mkdir4(home, { recursive: true });
-  await writeFile6(configPath(home), `${JSON.stringify(config2, null, 2)}
-`, "utf8");
   try {
     const workspace = await openWorkspace(home, config2);
     await workspace.mailbox.assertMailbox();
@@ -19034,18 +19077,20 @@ async function configureChannel(request) {
       detail: describe(error2)
     };
   }
+  await writeFile7(configPath(home), `${JSON.stringify(config2, null, 2)}
+`, "utf8");
   return { ok: true, config: config2 };
 }
 var MAX_NAME_ATTEMPTS = 5;
 async function installChannel(request, run) {
-  const { home, machineName, peer, mode, repo, attempt } = request;
+  const { home, machineName, peer, mode, repo } = request;
   if (await isConfigured(home)) {
     return `This machine already has a channel configured in ${home}. Read config.json there to see it, and remove that file by hand to start over.`;
   }
   let repoUrl = repo;
   if (mode !== "url") {
-    if (mode === "create" && (attempt ?? 1) > MAX_NAME_ATTEMPTS) {
-      return `Stopping after ${MAX_NAME_ATTEMPTS} taken names. Rather than proposing another one, tell the user to pick an existing repository with mode "use", to create one under a different account, or to make it themselves and pass its address with mode "url".`;
+    if (mode === "create" && await countAttempt(home) > MAX_NAME_ATTEMPTS) {
+      return `Stopping after ${MAX_NAME_ATTEMPTS} attempts at creating a repository from this machine. Rather than proposing another name, tell the user to pick an existing repository with mode "use", to create one under a different account, or to make it themselves and pass its address with mode "url".`;
     }
     const outcome = await resolveRepo(mode, repo, run);
     if (!outcome.ok) {
@@ -19057,23 +19102,42 @@ async function installChannel(request, run) {
   if (!configured.ok) {
     return configured.detail;
   }
+  await clearAttempts(home);
   return `The channel is set up: "${machineName}" talking to "${peer}", through ${repoUrl}.
 
 Two things are still missing, and neither can be done from here.
 
-The hooks, which deliver mail into a session, belong in the user own settings file - tell them what to add rather than writing it for them.
+The hooks deliver mail into a session. They belong in the user own settings file, so show them this rather than writing it for them - the path is already filled in:
+
+${hookBlock()}
 
 And the other machine needs the same setup, pointing at the same repository address, with the two names swapped.`;
 }
+function hookBlock() {
+  const cliPath = join7(dirname2(fileURLToPath(import.meta.url)), "cli.js");
+  return JSON.stringify(
+    {
+      hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: `node ${cliPath} hook session-start` }] }],
+        Stop: [{ hooks: [{ type: "command", command: `node ${cliPath} hook stop` }] }]
+      }
+    },
+    null,
+    2
+  );
+}
 async function isConfigured(home) {
   try {
-    await readFile6(configPath(home), "utf8");
+    await readFile7(configPath(home), "utf8");
     return true;
   } catch {
     return false;
   }
 }
 function describe(error2) {
+  if (error2 instanceof ZodError) {
+    return error2.issues.map((issue2) => `${issue2.path.join(".") || "config"}: ${issue2.message}`).join("; ");
+  }
   return error2 instanceof Error ? error2.message : String(error2);
 }
 
@@ -19116,10 +19180,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             enum: ["use", "create", "url"],
             description: "use: an existing GitHub repository, named by repo. create: a new private one, named by repo. url: a repository address given as is, GitHub or not, which needs no gh."
           },
-          repo: { type: "string", description: 'Repository name for "use" and "create", full URL for "url".' },
-          attempt: {
-            type: "number",
-            description: 'For "create" only. 1 the first time, then increase by one each time a name comes back taken. Refused past five, so a name hunt cannot go on forever.'
+          repo: {
+            type: "string",
+            description: 'For "use" and "create": a repository name, optionally prefixed by its owner as "owner/name". For "url": the full address. Creation is refused after five attempts from this machine, counted on disk, so a name hunt cannot go on forever.'
           }
         },
         required: ["machineName", "peer", "mode", "repo"]
@@ -19128,21 +19191,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   ]
 }));
 async function runSetup(args) {
-  const { machineName, peer, mode, repo, attempt } = args ?? {};
+  const { machineName, peer, mode, repo } = args ?? {};
   if (typeof machineName !== "string" || typeof peer !== "string" || typeof repo !== "string") {
     return "setup_channel needs machineName, peer and repo as strings.";
   }
   if (mode !== "use" && mode !== "create" && mode !== "url") {
     return "setup_channel needs mode to be one of: use, create, url.";
   }
-  return installChannel({
-    home: resolveHome(),
-    machineName,
-    peer,
-    mode,
-    repo,
-    ...typeof attempt === "number" ? { attempt } : {}
-  });
+  return installChannel({ home: resolveHome(), machineName, peer, mode, repo });
 }
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "setup_channel") {
@@ -19190,7 +19246,7 @@ async function startWatcherIfAsked() {
     if (!config2.autoWatch || await readWatchProcess(home) !== void 0) {
       return;
     }
-    const cliPath = join6(dirname2(fileURLToPath(import.meta.url)), "cli.js");
+    const cliPath = join8(dirname3(fileURLToPath2(import.meta.url)), "cli.js");
     spawn(process.execPath, [cliPath, "watch"], { detached: true, stdio: "ignore" }).unref();
   } catch {
   }

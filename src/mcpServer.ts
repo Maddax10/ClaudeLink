@@ -71,12 +71,12 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
               'use: an existing GitHub repository, named by repo. create: a new private one, named ' +
               'by repo. url: a repository address given as is, GitHub or not, which needs no gh.',
           },
-          repo: { type: 'string', description: 'Repository name for "use" and "create", full URL for "url".' },
-          attempt: {
-            type: 'number',
+          repo: {
+            type: 'string',
             description:
-              'For "create" only. 1 the first time, then increase by one each time a name comes ' +
-              'back taken. Refused past five, so a name hunt cannot go on forever.',
+              'For "use" and "create": a repository name, optionally prefixed by its owner as ' +
+              '"owner/name". For "url": the full address. Creation is refused after five attempts ' +
+              'from this machine, counted on disk, so a name hunt cannot go on forever.',
           },
         },
         required: ['machineName', 'peer', 'mode', 'repo'],
@@ -88,7 +88,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 /** La saisie du modele, verifiee avant d'entrer dans le produit. Tout le reste - le depot, la
  *  limite d'essais, la configuration - vit dans `setup.ts`, ou il se teste. */
 async function runSetup(args: unknown): Promise<string> {
-  const { machineName, peer, mode, repo, attempt } = (args ?? {}) as Record<string, unknown>;
+  const { machineName, peer, mode, repo } = (args ?? {}) as Record<string, unknown>;
 
   if (typeof machineName !== 'string' || typeof peer !== 'string' || typeof repo !== 'string') {
     return 'setup_channel needs machineName, peer and repo as strings.';
@@ -97,14 +97,7 @@ async function runSetup(args: unknown): Promise<string> {
     return 'setup_channel needs mode to be one of: use, create, url.';
   }
 
-  return installChannel({
-    home: resolveHome(),
-    machineName,
-    peer,
-    mode,
-    repo,
-    ...(typeof attempt === 'number' ? { attempt } : {}),
-  });
+  return installChannel({ home: resolveHome(), machineName, peer, mode, repo });
 }
 
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {

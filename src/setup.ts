@@ -1,5 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ZodError } from 'zod';
 import { type Config, resolveConfig } from './core/config.js';
+import { clearAttempts, countAttempt } from './deliver/attempts.js';
 import { explainRepoFailure } from './deliver/installHint.js';
 import { type GhRunner, resolveRepo } from './git/provision.js';
 import { NotAMailboxError } from './mailbox.js';
@@ -39,20 +43,34 @@ export async function configureChannel(request: ChannelRequest): Promise<Channel
   let config: Config;
   try {
     // Valide avant d'ecrire quoi que ce soit : un nom refuse doit l'etre ici, pas au premier envoi.
-    config = resolveConfig({ file: { machineName, peer, repoUrl } });
+    //
+    // `env` est passe comme partout ailleurs. Sans lui, l'installation clonait et amorcait le depot
+    // que la personne avait nomme, pendant que le premier `check_inbox` - qui passe par `loadApp`,
+    // lequel applique l'environnement - en ouvrait un autre. Deux depots, un succes affiche, et
+    // rien pour dire lequel fait foi.
+    config = resolveConfig({ file: { machineName, peer, repoUrl }, env: process.env });
   } catch (error) {
     return { ok: false, cause: 'invalid', detail: describe(error) };
   }
 
+  // Et si l'environnement a effectivement pris le dessus, on le dit : quelqu'un qui a tape une
+  // adresse et en voit configurer une autre doit l'apprendre maintenant, pas au premier message.
+  if (config.repoUrl !== repoUrl) {
+    return {
+      ok: false,
+      cause: 'invalid',
+      detail: `CLAUDE_LINK_REPO_URL is set to ${config.repoUrl} and overrides the address you gave (${repoUrl}). Unset it, or set up the channel with that address.`,
+    };
+  }
+
   await mkdir(home, { recursive: true });
-  await writeFile(configPath(home), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 
   try {
     // `openWorkspace(home, config)` et non `loadApp()` : `loadApp` relit la configuration depuis
-    // l'environnement, donc il ouvrirait le canal de la machine plutot que celui qu'on vient
-    // d'ecrire. Mesure du 9 aout 2026 : les tests d'installation, sur un home temporaire, ont fait
-    // avancer les curseurs du vrai canal. Rien n'a ete perdu ce jour-la - le lot etait vide - mais
-    // le meme code lance une minute plus tot aurait mange du courrier jamais montre.
+    // l'environnement, donc il ouvrirait le canal de la machine plutot que celui qu'on vient de
+    // construire. Mesure du 9 aout 2026 : les tests d'installation, sur un home temporaire, ont
+    // fait avancer les curseurs du vrai canal. Rien n'a ete perdu ce jour-la - le lot etait vide -
+    // mais le meme code lance une minute plus tot aurait mange du courrier jamais montre.
     const workspace = await openWorkspace(home, config);
     // Le marqueur est verifie **maintenant**, pas au premier envoi. Sans ca, quelqu'un qui donne le
     // nom d'un depot de code - le cas le plus probable de tous - ne l'apprendrait qu'apres avoir
@@ -63,14 +81,20 @@ export async function configureChannel(request: ChannelRequest): Promise<Channel
     await workspace.mailbox.receive('session');
     await workspace.mailbox.receive('watch');
   } catch (error) {
-    // La config reste sur le disque : la relire est le seul moyen de comprendre ce qui a ete tente,
-    // et l'effacer ici priverait l'utilisateur de cette trace au pire moment.
     return {
       ok: false,
       cause: error instanceof NotAMailboxError ? 'not-a-mailbox' : 'failed',
       detail: describe(error),
     };
   }
+
+  // `config.json` s'ecrit en dernier, et c'est ce qui rend une tentative ratee reprenable.
+  //
+  // Il s'ecrivait d'abord : un echec laissait donc un fichier de configuration derriere lui, et
+  // toute reprise repondait « deja configure ». La seule issue etait d'effacer ce fichier a la
+  // main - ce qu'un modele ne peut pas faire seul, au premier contact de quelqu'un avec le
+  // produit. L'existence de ce fichier veut dire « ca a marche », rien d'autre.
+  await writeFile(configPath(home), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 
   return { ok: true, config };
 }
@@ -85,7 +109,6 @@ export interface InstallRequest {
   readonly peer: string;
   readonly mode: 'use' | 'create' | 'url';
   readonly repo: string;
-  readonly attempt?: number;
 }
 
 /**
@@ -97,7 +120,7 @@ export interface InstallRequest {
  * lancant un vrai serveur contre un vrai GitHub.
  */
 export async function installChannel(request: InstallRequest, run?: GhRunner): Promise<string> {
-  const { home, machineName, peer, mode, repo, attempt } = request;
+  const { home, machineName, peer, mode, repo } = request;
 
   if (await isConfigured(home)) {
     return `This machine already has a channel configured in ${home}. Read config.json there to see it, and remove that file by hand to start over.`;
@@ -105,12 +128,14 @@ export async function installChannel(request: InstallRequest, run?: GhRunner): P
 
   let repoUrl = repo;
   if (mode !== 'url') {
-    // Le compteur est verifie avant `resolveRepo` : passe la limite, on ne touche meme pas a `gh`.
-    if (mode === 'create' && (attempt ?? 1) > MAX_NAME_ATTEMPTS) {
+    // Compte sur le disque, avant de toucher a `gh` : passe la limite, aucune commande ne part.
+    // L'appelant ne fournit plus ce nombre - il le remettait a un a chaque fois sans le vouloir.
+    if (mode === 'create' && (await countAttempt(home)) > MAX_NAME_ATTEMPTS) {
       return (
-        `Stopping after ${MAX_NAME_ATTEMPTS} taken names. Rather than proposing another one, tell ` +
-        'the user to pick an existing repository with mode "use", to create one under a different ' +
-        'account, or to make it themselves and pass its address with mode "url".'
+        `Stopping after ${MAX_NAME_ATTEMPTS} attempts at creating a repository from this machine. ` +
+        'Rather than proposing another name, tell the user to pick an existing repository with ' +
+        'mode "use", to create one under a different account, or to make it themselves and pass ' +
+        'its address with mode "url".'
       );
     }
     const outcome = await resolveRepo(mode, repo, run);
@@ -124,14 +149,39 @@ export async function installChannel(request: InstallRequest, run?: GhRunner): P
   if (!configured.ok) {
     return configured.detail;
   }
+  await clearAttempts(home);
 
   return (
     `The channel is set up: "${machineName}" talking to "${peer}", through ${repoUrl}.\n\n` +
     'Two things are still missing, and neither can be done from here.\n\n' +
-    'The hooks, which deliver mail into a session, belong in the user own settings file - tell ' +
-    'them what to add rather than writing it for them.\n\n' +
+    'The hooks deliver mail into a session. They belong in the user own settings file, so show ' +
+    `them this rather than writing it for them - the path is already filled in:\n\n${hookBlock()}\n\n` +
     'And the other machine needs the same setup, pointing at the same repository address, with the ' +
     'two names swapped.'
+  );
+}
+
+/**
+ * Le bloc de hooks a coller, avec le chemin reel de cette installation.
+ *
+ * `install.md` demandait au modele de « remplacer le chemin par celui qu'a affiche l'outil », et
+ * l'outil n'affichait aucun chemin : il ne restait qu'a l'inventer ou a le faire chercher, a la
+ * derniere etape d'une premiere installation.
+ *
+ * Une seule forme, celle que `clink init` imprime deja, pour qu'il n'y ait pas deux blocs
+ * differents selon la porte par laquelle on est entre.
+ */
+export function hookBlock(): string {
+  const cliPath = join(dirname(fileURLToPath(import.meta.url)), 'cli.js');
+  return JSON.stringify(
+    {
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: `node ${cliPath} hook session-start` }] }],
+        Stop: [{ hooks: [{ type: 'command', command: `node ${cliPath} hook stop` }] }],
+      },
+    },
+    null,
+    2,
   );
 }
 
@@ -144,6 +194,14 @@ export async function isConfigured(home: string): Promise<boolean> {
   }
 }
 
+/**
+ * Un texte, jamais une structure. `resolveConfig` leve une `ZodError`, dont le `message` est un
+ * tableau JSON complet - c'est ce qui remontait au modele quand un nom de machine etait refuse,
+ * dans le lot qui promettait des echecs lisibles.
+ */
 function describe(error: unknown): string {
+  if (error instanceof ZodError) {
+    return error.issues.map((issue) => `${issue.path.join('.') || 'config'}: ${issue.message}`).join('; ');
+  }
   return error instanceof Error ? error.message : String(error);
 }

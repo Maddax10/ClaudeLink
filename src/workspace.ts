@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from './core/config.js';
 import { OperationLock } from './git/lock.js';
@@ -30,6 +30,20 @@ export async function openWorkspace(workDir: string, config: Config): Promise<Wo
 
   const repo = new GitRepo(repoDir, config.branch);
 
+  // Un clone deja present n'est garde que s'il pointe bien sur le depot demande. Sans ce controle,
+  // corriger l'adresse apres une premiere tentative ne servait a rien : le clone d'avant restait,
+  // `openWorkspace` rendait un succes, et tous les messages partaient vers l'ancien depot. Mesure
+  // le 9 aout 2026 - `config.repoUrl` disait la nouvelle adresse pendant que `remote -v` disait
+  // l'ancienne.
+  if (await exists(join(repoDir, '.git'))) {
+    const current = await currentRemote(repo);
+    if (current !== config.repoUrl) {
+      // Destructeur, mais borne a notre propre clone : les curseurs et la configuration vivent
+      // dans `workDir`, jamais ici. Ce dossier ne contient que ce qu'on a clone.
+      await rm(repoDir, { recursive: true, force: true });
+    }
+  }
+
   if (!(await exists(join(repoDir, '.git')))) {
     await cloneInto(workDir, repoDir, config);
   }
@@ -39,6 +53,16 @@ export async function openWorkspace(workDir: string, config: Config): Promise<Wo
 
   const mailbox = new Mailbox(repo, repoDir, workDir, config, new OperationLock(workDir));
   return { config, workDir, repoDir, repo, mailbox };
+}
+
+/** L'adresse sur laquelle ce clone est branche, ou `undefined` si on ne peut pas la lire - auquel
+ *  cas on prefere recloner que garder un clone dont on ne sait rien. */
+async function currentRemote(repo: GitRepo): Promise<string | undefined> {
+  try {
+    return (await repo.run(['config', '--get', 'remote.origin.url'])).trim();
+  } catch {
+    return undefined;
+  }
 }
 
 async function cloneInto(workDir: string, repoDir: string, config: Config): Promise<void> {
@@ -62,20 +86,30 @@ async function bootstrapIfEmpty(repo: GitRepo, repoDir: string, config: Config):
     return;
   }
 
-  try {
+  // « Vide » se demande au depot, il ne se deduit pas d'un echec.
+  //
+  // Une premiere version amorcait des que `git fetch origin <branche>` echouait, en supposant que
+  // seul un depot vide pouvait faire echouer un fetch. Faux, et mesure : un depot de code dont la
+  // branche par defaut s'appelle `master` fait echouer un fetch de `main`, et le mailbox etait
+  // ecrit puis pousse par-dessus. Une panne de reseau donnait le meme resultat.
+  //
+  // `ls-remote` repond la seule question qui compte - ce depot a-t-il des references ? - et son
+  // echec reste un echec : on ne confond plus « je n'ai pas pu savoir » avec « il n'y a rien ».
+  const refs = (await repo.run(['ls-remote', 'origin'])).trim();
+
+  if (refs.length > 0) {
+    if (!refs.split('\n').some((line) => line.endsWith(`refs/heads/${config.branch}`))) {
+      throw new Error(
+        `${config.repoUrl} has no branch "${config.branch}". This repository is not empty, so nothing was written to it. Point the channel at the right branch, or at an empty repository.`,
+      );
+    }
     await repo.fetch();
     await repo.resetHardToRemote();
     if (await exists(join(repoDir, MAILBOX_MARKER))) {
       return;
     }
-    // Le fetch a reussi : ce depot a une branche et des commits. Il n'est pas vide, il n'a pas de
-    // marqueur, donc ce n'est pas une boite aux lettres - et on n'ecrit rien dedans.
+    // Des references, la bonne branche, et pas de marqueur : ce n'est pas une boite aux lettres.
     throw new NotAMailboxError(repoDir);
-  } catch (error) {
-    if (error instanceof NotAMailboxError) {
-      throw error;
-    }
-    // Le fetch a echoue : le depot n'a ni branche ni commit a recuperer. Il est vide, on l'amorce.
   }
 
   await writeFile(join(repoDir, MAILBOX_MARKER), mailboxMarkerContent(), 'utf8');

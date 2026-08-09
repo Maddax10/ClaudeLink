@@ -12,8 +12,14 @@ const execFileAsync = promisify(execFile);
  * Ce motif est donc ecrit avant tout le reste du fichier, et rien ne l'atteint sans y passer.
  * GitHub accepte lettres, chiffres, tiret, souligne et point ; on n'accepte rien d'autre, et jamais
  * en premier caractere autre chose qu'une lettre ou un chiffre.
+ *
+ * La forme `proprietaire/depot` est acceptee, parce que c'est celle que les gens disent et la seule
+ * qui atteigne le depot d'une organisation ou d'un autre compte - `gh repo view <nom>` sans prefixe
+ * ne cherche que chez le proprietaire par defaut. La barre oblique ne pose aucun probleme ici : ce
+ * qui etait dangereux, c'est le tiret initial, lu comme une option.
  */
-export const REPO_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const SEGMENT = '[A-Za-z0-9][A-Za-z0-9._-]{0,99}';
+export const REPO_NAME_PATTERN = new RegExp(`^${SEGMENT}(?:/${SEGMENT})?$`);
 
 export function isRepoName(value: string): boolean {
   return REPO_NAME_PATTERN.test(value);
@@ -84,9 +90,11 @@ function classify(error: unknown, mode: 'use' | 'create'): RepoFailure {
   if (mode === 'create' && (text.includes('already exists') || text.includes('name already'))) {
     return 'name-taken';
   }
-  if (mode === 'use') {
-    // « introuvable » et « pas le droit de le voir » sont indiscernables chez GitHub, et c'est
-    // voulu de leur part : repondre autrement dirait a un inconnu quels depots prives existent.
+  // « introuvable » et « pas le droit de le voir » sont indiscernables chez GitHub, et c'est voulu
+  // de leur part : repondre autrement dirait a un inconnu quels depots prives existent. On ne rend
+  // donc « not-found » que si gh l'a dit - une coupure reseau, une limite de debit ou un plantage
+  // renvoyaient jusqu'ici quelqu'un verifier un nom parfaitement correct.
+  if (mode === 'use' && (text.includes('could not resolve') || text.includes('not found') || text.includes('404'))) {
     return 'not-found';
   }
   return 'failed';

@@ -1,7 +1,13 @@
 import type { RepoFailure } from '../git/provision.js';
 
 /**
- * Les commandes d'installation, a un seul endroit.
+ * Les commandes d'installation.
+ *
+ * Elles existent **a deux endroits**, ici et dans `commands/install.md`, et ce n'est pas un oubli :
+ * la commande du plugin doit pouvoir dire « installe node » alors que rien de ce fichier ne peut
+ * tourner, faute de node. Ce qu'on ne peut pas factoriser, on le signale - les deux se modifient
+ * ensemble. Une version precedente de ce commentaire affirmait « a un seul endroit » tout en etant
+ * deja recopiee.
  *
  * Le message doit porter la commande de **cette** machine, pas une liste de trois systemes dans
  * laquelle l'utilisateur cherche le sien. C'est le premier contact de quelqu'un avec le produit :

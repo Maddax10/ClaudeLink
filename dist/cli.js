@@ -10,7 +10,7 @@ var __export = (target, all) => {
 // src/cli.ts
 import { execFile as execFile3 } from "node:child_process";
 import { appendFile } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 import { promisify as promisify3 } from "node:util";
 
 // src/app.ts
@@ -4198,7 +4198,7 @@ function logPath(home) {
 }
 
 // src/workspace.ts
-import { mkdir as mkdir3, readFile as readFile2, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile2, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join4 } from "node:path";
 
 // src/git/lock.ts
@@ -4765,6 +4765,12 @@ async function openWorkspace(workDir, config) {
   await mkdir3(workDir, { recursive: true });
   await mkdir3(hooksDir, { recursive: true });
   const repo = new GitRepo(repoDir, config.branch);
+  if (await exists(join4(repoDir, ".git"))) {
+    const current = await currentRemote(repo);
+    if (current !== config.repoUrl) {
+      await rm3(repoDir, { recursive: true, force: true });
+    }
+  }
   if (!await exists(join4(repoDir, ".git"))) {
     await cloneInto(workDir, repoDir, config);
   }
@@ -4772,6 +4778,13 @@ async function openWorkspace(workDir, config) {
   await bootstrapIfEmpty(repo, repoDir, config);
   const mailbox = new Mailbox(repo, repoDir, workDir, config, new OperationLock(workDir));
   return { config, workDir, repoDir, repo, mailbox };
+}
+async function currentRemote(repo) {
+  try {
+    return (await repo.run(["config", "--get", "remote.origin.url"])).trim();
+  } catch {
+    return void 0;
+  }
 }
 async function cloneInto(workDir, repoDir, config) {
   const parent = new GitRepo(workDir, config.branch);
@@ -4781,17 +4794,19 @@ async function bootstrapIfEmpty(repo, repoDir, config) {
   if (await exists(join4(repoDir, MAILBOX_MARKER))) {
     return;
   }
-  try {
+  const refs = (await repo.run(["ls-remote", "origin"])).trim();
+  if (refs.length > 0) {
+    if (!refs.split("\n").some((line) => line.endsWith(`refs/heads/${config.branch}`))) {
+      throw new Error(
+        `${config.repoUrl} has no branch "${config.branch}". This repository is not empty, so nothing was written to it. Point the channel at the right branch, or at an empty repository.`
+      );
+    }
     await repo.fetch();
     await repo.resetHardToRemote();
     if (await exists(join4(repoDir, MAILBOX_MARKER))) {
       return;
     }
     throw new NotAMailboxError(repoDir);
-  } catch (error) {
-    if (error instanceof NotAMailboxError) {
-      throw error;
-    }
   }
   await writeFile3(join4(repoDir, MAILBOX_MARKER), mailboxMarkerContent(), "utf8");
   await writeFile3(join4(repoDir, ".gitattributes"), GITATTRIBUTES, "utf8");
@@ -4855,7 +4870,7 @@ function someoneIsAround(lastTurnAt, now, idleSeconds) {
 }
 
 // src/deliver/awaiting.ts
-import { readFile as readFile4, rm as rm3, writeFile as writeFile4 } from "node:fs/promises";
+import { readFile as readFile4, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
 var awaitingSchema = external_exports.object({
   /** Horodatage local, en millisecondes, au-dela duquel on cesse d'attendre. */
   until: external_exports.number().int().positive(),
@@ -4870,7 +4885,7 @@ async function readAwaiting(home) {
   }
 }
 async function clearAwaiting(home) {
-  await rm3(awaitingPath(home), { force: true });
+  await rm4(awaitingPath(home), { force: true });
 }
 
 // src/deliver/presence.ts
@@ -4923,7 +4938,7 @@ function renderDeliveries(result, peer) {
 
 // src/deliver/watchProcess.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile6, rm as rm4, writeFile as writeFile6 } from "node:fs/promises";
+import { readFile as readFile6, rm as rm5, writeFile as writeFile6 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
 var recordSchema = external_exports.object({
@@ -4966,7 +4981,7 @@ async function acquireWatchProcess(home, pid = process.pid) {
   }
 }
 async function clearWatchProcess(home) {
-  await rm4(watchProcessPath(home), { force: true });
+  await rm5(watchProcessPath(home), { force: true });
 }
 async function stopWatchProcess(home) {
   const record = await readWatchProcess(home);
@@ -4992,11 +5007,18 @@ function isAlive(pid) {
 
 // src/setup.ts
 import { mkdir as mkdir4, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
+import { dirname as dirname2, join as join6 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// src/deliver/attempts.ts
+var attemptsSchema = external_exports.object({ count: external_exports.number().int().min(0) });
 
 // src/git/provision.ts
 import { execFile as execFile2 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
 var execFileAsync2 = promisify2(execFile2);
+var SEGMENT = "[A-Za-z0-9][A-Za-z0-9._-]{0,99}";
+var REPO_NAME_PATTERN = new RegExp(`^${SEGMENT}(?:/${SEGMENT})?$`);
 
 // src/setup.ts
 async function configureChannel(request) {
@@ -5015,8 +5037,6 @@ async function configureChannel(request) {
     return { ok: false, cause: "invalid", detail: describe(error) };
   }
   await mkdir4(home, { recursive: true });
-  await writeFile7(configPath(home), `${JSON.stringify(config, null, 2)}
-`, "utf8");
   try {
     const workspace = await openWorkspace(home, config);
     await workspace.mailbox.assertMailbox();
@@ -5029,7 +5049,22 @@ async function configureChannel(request) {
       detail: describe(error)
     };
   }
+  await writeFile7(configPath(home), `${JSON.stringify(config, null, 2)}
+`, "utf8");
   return { ok: true, config };
+}
+function hookBlock() {
+  const cliPath = join6(dirname2(fileURLToPath(import.meta.url)), "cli.js");
+  return JSON.stringify(
+    {
+      hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: `node ${cliPath} hook session-start` }] }],
+        Stop: [{ hooks: [{ type: "command", command: `node ${cliPath} hook stop` }] }]
+      }
+    },
+    null,
+    2
+  );
 }
 async function isConfigured(home) {
   try {
@@ -5040,6 +5075,9 @@ async function isConfigured(home) {
   }
 }
 function describe(error) {
+  if (error instanceof ZodError) {
+    return error.issues.map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`).join("; ");
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -5099,8 +5137,7 @@ async function init(args) {
 `);
     return 1;
   }
-  const serverPath = join6(process.cwd(), "dist", "mcpServer.js");
-  const cliPath = join6(process.cwd(), "dist", "cli.js");
+  const serverPath = join7(process.cwd(), "dist", "mcpServer.js");
   process.stdout.write(
     `Configured "${machineName}" talking to "${peer}".
   work dir: ${home}
@@ -5110,16 +5147,9 @@ Add this to your Claude Code MCP config (~/.claude.json, "mcpServers"):
 
 ${JSON.stringify({ "claude-link": { command: "node", args: [serverPath] } }, null, 2)}
 
-Add these hooks to ~/.claude/settings.json ("hooks"):
+Add these hooks to ~/.claude/settings.json:
 
-${JSON.stringify(
-      {
-        SessionStart: [{ hooks: [{ type: "command", command: "node", args: [cliPath, "hook", "session-start"] }] }],
-        Stop: [{ hooks: [{ type: "command", command: "node", args: [cliPath, "hook", "stop"] }] }]
-      },
-      null,
-      2
-    )}
+${hookBlock()}
 
 And allow the reply tool once, so answering never waits on a prompt:
   "permissions": { "allow": ["mcp__claude-link__send_to_peer"] }

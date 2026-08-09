@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveConfig } from '../../src/core/config.js';
 import { type Workspace, openWorkspace } from '../../src/workspace.js';
 import { configureChannel, installChannel } from '../../src/setup.js';
+import { ghFailure, ghSpy as spy } from '../support/ghSpy.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +15,7 @@ const execFileAsync = promisify(execFile);
 let root: string;
 let mailbox: string;
 let codeRepo: string;
+let masterRepo: string;
 let mac: Workspace;
 
 beforeAll(async () => {
@@ -35,6 +37,17 @@ beforeAll(async () => {
   await execFileAsync('git', ['-C', seed, 'add', '-A']);
   await execFileAsync('git', ['-C', seed, '-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '--quiet', '-m', 'init']);
   await execFileAsync('git', ['-C', seed, 'push', '--quiet', 'origin', 'HEAD:main']);
+
+  // Le meme, mais dont la branche par defaut s'appelle `master` : un fetch de `main` y echoue, et
+  // c'est cet echec qui etait pris pour « depot vide ».
+  masterRepo = join(root, 'ancien.git');
+  await execFileAsync('git', ['init', '--quiet', '--bare', '--initial-branch=master', masterRepo]);
+  const old = join(root, 'seed-master');
+  await execFileAsync('git', ['clone', '--quiet', masterRepo, old]);
+  await writeFile(join(old, 'README.md'), 'un projet plus ancien\n', 'utf8');
+  await execFileAsync('git', ['-C', old, 'add', '-A']);
+  await execFileAsync('git', ['-C', old, '-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '--quiet', '-m', 'init']);
+  await execFileAsync('git', ['-C', old, 'push', '--quiet', 'origin', 'HEAD:master']);
 }, 60_000);
 
 afterAll(async () => {
@@ -81,6 +94,44 @@ describe('configureChannel', () => {
     expect(outcome).toMatchObject({ ok: false, cause: 'not-a-mailbox' });
   }, 60_000);
 
+  /**
+   * Le meme piege, par l'autre porte. Un depot de code dont la branche par defaut n'est pas celle
+   * qu'on demande faisait echouer `git fetch origin main`, et cet echec etait lu comme « le depot
+   * est vide » : le mailbox etait ecrit puis **pousse** par-dessus le code. Une panne de reseau
+   * donnait exactement le meme resultat.
+   */
+  it('n ecrit rien dans un depot dont la branche par defaut porte un autre nom', async () => {
+    const outcome = await configureChannel({
+      home: homeFor('branche-autre'),
+      machineName: 'mac',
+      peer: 'windows',
+      repoUrl: masterRepo,
+    });
+
+    expect(outcome.ok).toBe(false);
+
+    // Ce qui compte n'est pas le refus, c'est que le depot soit intact.
+    const branches = await execFileAsync('git', ['-C', masterRepo, 'branch', '--list']);
+    expect(branches.stdout).not.toContain('main');
+    const tree = await execFileAsync('git', ['-C', masterRepo, 'ls-tree', '-r', '--name-only', 'master']);
+    expect(tree.stdout).not.toContain('mailbox.json');
+  }, 60_000);
+
+  /**
+   * Corriger l'adresse apres une premiere tentative ne servait a rien : le clone d'avant restait,
+   * et tous les messages continuaient de partir vers l'ancien depot, avec un `ok: true` par-dessus.
+   */
+  it('reclone quand l adresse du depot change', async () => {
+    const home = homeFor('adresse-corrigee');
+
+    await configureChannel({ home, machineName: 'mac', peer: 'windows', repoUrl: codeRepo });
+    const corrected = await configureChannel({ home, machineName: 'mac', peer: 'windows', repoUrl: mailbox });
+
+    expect(corrected.ok).toBe(true);
+    const remote = await execFileAsync('git', ['-C', join(home, 'repo'), 'remote', 'get-url', 'origin']);
+    expect(remote.stdout.trim()).toBe(mailbox);
+  }, 60_000);
+
   it('refuse un nom de machine qui ne tiendrait pas dans un chemin, sans rien ecrire', async () => {
     const home = homeFor('nom-invalide');
 
@@ -106,18 +157,6 @@ describe('configureChannel', () => {
 });
 
 describe('installChannel', () => {
-  /** Un `gh` qui note ce qu'on lui demande : ce qu'il ne recoit pas compte autant que ce qu'il rend. */
-  function spy(reply: (args: readonly string[]) => string) {
-    const calls: string[][] = [];
-    return {
-      calls,
-      run: async (args: readonly string[]) => {
-        calls.push([...args]);
-        return reply(args);
-      },
-    };
-  }
-
   it('installe depuis une URL donnee, sans jamais appeler gh', async () => {
     const { run, calls } = spy(() => '');
 
@@ -131,40 +170,42 @@ describe('installChannel', () => {
   }, 60_000);
 
   /**
-   * La limite qui distingue une regle du code d'une consigne qu'on espere voir respectee. Au
-   * sixieme essai, `gh` ne doit pas etre touche du tout.
+   * La limite qui distingue une regle du code d'une consigne qu'on espere voir respectee.
+   *
+   * L'appelant ne fournit plus de compteur : il en fournissait un, et une version qui renvoyait
+   * `1` a chaque fois bouclait pour toujours. Le compte vit sur le disque, donc ce test appelle
+   * six fois pour de vrai, sans jamais rien dire du nombre d'essais.
    */
-  it('arrete la chasse aux noms au sixieme essai, sans lancer gh', async () => {
-    const { run, calls } = spy(() => '');
+  it('arrete la chasse aux noms au sixieme essai, sans rappeler gh', async () => {
+    const home = homeFor('trop-d-essais');
+    const { run, calls } = spy(ghFailure('Name already exists on this account'));
+    const create = () =>
+      installChannel({ home, machineName: 'mac', peer: 'windows', mode: 'create', repo: 'x' }, run);
 
-    const text = await installChannel(
-      { home: homeFor('trop-d-essais'), machineName: 'mac', peer: 'windows', mode: 'create', repo: 'x', attempt: 6 },
-      run,
+    for (let essai = 0; essai < 5; essai += 1) {
+      expect(await create()).toContain('deja pris');
+    }
+    const apresCinq = calls.length;
+
+    const sixieme = await create();
+
+    expect(sixieme).toContain('Stopping after 5 attempts');
+    expect(calls).toHaveLength(apresCinq);
+  }, 60_000);
+
+  it('repart avec ses cinq essais une fois l installation reussie', async () => {
+    const home = homeFor('compteur-remis');
+    const { run } = spy((args) => (args[1] === 'view' ? JSON.stringify({ url: mailbox.replace(/\.git$/, '') }) : ''));
+
+    expect(await installChannel({ home, machineName: 'mac', peer: 'windows', mode: 'create', repo: 'x' }, run)).toContain(
+      'The channel is set up',
     );
 
-    expect(text).toContain('Stopping after 5 taken names');
-    expect(calls).toHaveLength(0);
-  });
-
-  it('laisse passer les cinq premiers', async () => {
-    const { calls, run } = spy((args) =>
-      args[1] === 'view' ? JSON.stringify({ url: `https://example.invalid/x` }) : '',
-    );
-
-    await installChannel(
-      { home: homeFor('cinquieme'), machineName: 'mac', peer: 'windows', mode: 'create', repo: 'x', attempt: 5 },
-      run,
-    );
-
-    expect(calls[0]).toEqual(['repo', 'create', 'x', '--private']);
+    await expect(readFile(join(home, 'create-attempts.json'), 'utf8')).rejects.toThrow();
   }, 60_000);
 
   it('rend un texte lisible quand le nom est deja pris, pas une trace', async () => {
-    const { run } = spy(() => {
-      const error = new Error('Name already exists on this account') as Error & { stderr: string };
-      error.stderr = 'Name already exists on this account';
-      throw error;
-    });
+    const { run } = spy(ghFailure('Name already exists on this account'));
 
     const text = await installChannel(
       { home: homeFor('nom-pris'), machineName: 'mac', peer: 'windows', mode: 'create', repo: 'pris', attempt: 1 },

@@ -10,7 +10,7 @@ import { markTurn, readLastTurn } from './deliver/presence.js';
 import { renderDeliveries } from './deliver/render.js';
 import { acquireWatchProcess, readWatchProcess, stopWatchProcess } from './deliver/watchProcess.js';
 import { configPath, logPath, resolveHome } from './paths.js';
-import { configureChannel } from './setup.js';
+import { configureChannel, hookBlock } from './setup.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -75,23 +75,17 @@ async function init(args: string[]): Promise<number> {
   }
 
   const serverPath = join(process.cwd(), 'dist', 'mcpServer.js');
-  const cliPath = join(process.cwd(), 'dist', 'cli.js');
 
+  // Le meme bloc que celui rendu par `setup_channel`. Deux formes differentes circulaient : celle-ci
+  // avec un tableau `args`, celle de la commande d'installation avec une commande en une chaine.
+  // Une seule des deux peut etre celle que Claude Code lit, et personne ne savait laquelle.
   process.stdout.write(
     `Configured "${machineName}" talking to "${peer}".\n` +
       `  work dir: ${home}\n` +
       `  repo:     ${repoUrl}\n\n` +
       'Add this to your Claude Code MCP config (~/.claude.json, "mcpServers"):\n\n' +
       `${JSON.stringify({ 'claude-link': { command: 'node', args: [serverPath] } }, null, 2)}\n\n` +
-      'Add these hooks to ~/.claude/settings.json ("hooks"):\n\n' +
-      `${JSON.stringify(
-        {
-          SessionStart: [{ hooks: [{ type: 'command', command: 'node', args: [cliPath, 'hook', 'session-start'] }] }],
-          Stop: [{ hooks: [{ type: 'command', command: 'node', args: [cliPath, 'hook', 'stop'] }] }],
-        },
-        null,
-        2,
-      )}\n\n` +
+      `Add these hooks to ~/.claude/settings.json:\n\n${hookBlock()}\n\n` +
       'And allow the reply tool once, so answering never waits on a prompt:\n' +
       '  "permissions": { "allow": ["mcp__claude-link__send_to_peer"] }\n',
   );
