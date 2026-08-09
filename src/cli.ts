@@ -154,8 +154,18 @@ async function watch(): Promise<number> {
       for (const delivery of result.deliveries) {
         await log(`answering ${delivery.message.id}`);
         const answer = await askClaude(delivery.safeText, config);
-        await workspace.mailbox.send(answer);
-        await log(`answered ${delivery.message.id}`);
+        if (answer.ok) {
+          await workspace.mailbox.send(answer.text);
+          await log(`answered ${delivery.message.id}`);
+        } else {
+          // Le pair doit savoir qu'il n'aura pas de reponse, sinon il attend pour rien. Mais ce
+          // message dit qu'il n'en est pas une, en une ligne, et sans recopier quoi que ce soit.
+          await workspace.mailbox.send(
+            `[claude-link] Pas de reponse a ta question : la session qui devait repondre a echoue (${answer.cause}). ` +
+              `Ceci est un avis automatique, personne ne l'a ecrit. Repose ta question, ou attends qu'une session s'ouvre a la main.`,
+          );
+          await log(`answer failed for ${delivery.message.id}: ${answer.cause}`);
+        }
       }
     } catch (error) {
       // Une panne de reseau ne doit ni tuer le veilleur ni remplir le journal : on recule.
@@ -166,7 +176,9 @@ async function watch(): Promise<number> {
   }
 }
 
-async function askClaude(question: string, config: { claudeCommand: string; watchTools: string; watchCwd: string; peer: string }): Promise<string> {
+type Answer = { ok: true; text: string } | { ok: false; cause: string };
+
+async function askClaude(question: string, config: { claudeCommand: string; watchTools: string; watchCwd: string; peer: string }): Promise<Answer> {
   // Le cadrage doit faire deux choses a la fois, et rater l'une des deux le rend inutile :
   // interdire l'action, et **exiger une reponse concrete**. Une premiere version ne disait que
   // la moitie defensive, et la machine distante repondait en demandant des precisions au lieu
@@ -200,12 +212,24 @@ async function askClaude(question: string, config: { claudeCommand: string; watc
       {
         cwd: config.watchCwd === '' ? process.cwd() : config.watchCwd,
         maxBuffer: 8 * 1024 * 1024,
-        timeout: 300_000,
+        // 15 minutes, et le chiffre vient d'une mesure : avec 300_000, les douze echecs du
+        // 9 aout 2026 tombaient TOUS entre 303 et 320 secondes. Ce n'etaient pas des pannes, c'etaient
+        // des reponses tuees en cours d'ecriture. Le delai median d'une reponse reussie ce jour-la
+        // etait de 111 s et la plus longue de 305 s : la limite coupait exactement les questions qui
+        // demandaient de lire des fichiers et de mesurer, c'est-a-dire les plus utiles.
+        timeout: 900_000,
       },
     );
-    return stdout.trim().length > 0 ? stdout.trim() : '(the answering session returned nothing)';
+    return { ok: true, text: stdout.trim().length > 0 ? stdout.trim() : '(the answering session returned nothing)' };
   } catch (error) {
-    return `(could not answer: ${(error as Error).message})`;
+    // Jamais le message brut de Node : il recopie la commande entiere, donc le prompt, donc le
+    // message recu. Les echecs du 9 aout 2026 faisaient jusqu'a 17 911 caracteres pour dire « rate »,
+    // et arrivaient a l'autre machine sous la forme d'une reponse - indiscernables d'une vraie.
+    //
+    // `killed` distingue les deux causes, que le message de Node confond : « Command failed: ... »
+    // s'ecrit pareil pour un delai depasse et pour un code de sortie non nul.
+    const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+    return { ok: false, cause: failure.killed === true ? 'timeout' : (failure.code ?? 'error') };
   }
 }
 
