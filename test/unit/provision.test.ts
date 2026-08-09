@@ -36,7 +36,7 @@ describe('le nom du depot', () => {
     // `proprietaire/depot` est la forme que les gens disent, et la seule qui atteigne le depot
     // d'une organisation : `gh repo view <nom>` sans prefixe ne cherche que chez le proprietaire
     // par defaut.
-    for (const nom of ['claude-link-mailbox', 'boite_2', 'a', 'Mon.Depot-1', 'Maddax10/claude-link-mailbox']) {
+    for (const nom of ['claude-link-mailbox', 'boite_2', 'a', 'Mon.Depot-1', 'une-organisation/sa-boite']) {
       expect((await resolveRepo('use', nom, run)).ok).toBe(true);
     }
   });

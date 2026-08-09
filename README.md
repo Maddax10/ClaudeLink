@@ -63,10 +63,15 @@ dans le fichier de réglages de quelqu'un sans qu'il le voie n'est pas à faire.
 
 Sans ces hooks le canal marche, mais rien n'arrive tout seul : il faut demander `check_inbox`.
 
-Pour vérifier à tout moment :
+## La ligne de commande
+
+Tout ce qui suit s'utilise **depuis le dossier du produit**. Installé par le plugin, il vit dans
+`~/.claude/plugins/`, et `claude plugin list` en donne le chemin ; cloné à la main, c'est le dossier
+du dépôt. Rien de tout ça n'est nécessaire à l'usage courant, qui passe par les outils de la
+session.
 
 ```bash
-node dist/cli.js doctor
+node dist/cli.js doctor            # git, accès au dépôt, veilleur, configuration
 ```
 
 ## S'en servir
@@ -79,7 +84,7 @@ Claude appelle `send_to_peer`. Le courrier entrant arrive **à la fin de chaque 
 tes fenêtres : même une session occupée à autre chose reçoit ce qui vient d'arriver. Quand tu viens
 de poser une question, le hook attend en plus quelques secondes une réponse immédiate.
 
-En ligne de commande :
+Et en ligne de commande, depuis le dossier du produit :
 
 ```bash
 node dist/cli.js send "coucou"     # envoyer
