@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFile } from 'node:child_process';
+import { type ChildProcess, execFile } from 'node:child_process';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -162,6 +162,20 @@ async function watch(): Promise<number> {
     return 1;
   }
 
+  // `watch --stop` envoie SIGTERM a ce processus-ci, et a lui seul. Sans ce relais, la session
+  // `claude -p` en cours d'ecriture lui survit : elle finit sa reponse, personne ne la lit puisque
+  // son lecteur est mort, et elle a consomme une session entiere pour rien. Mesure du 9 aout 2026 :
+  // deux arrets sur trois ont laisse une orpheline qu'il a fallu tuer a la main.
+  let answering: ChildProcess | undefined;
+  const stopNow = () => {
+    answering?.kill('SIGTERM');
+    // Sortie immediate et non `return` : la boucle est peut-etre dans un `await` de plusieurs
+    // minutes, et attendre qu'elle en revienne, c'est ne pas s'arreter.
+    process.exit(0);
+  };
+  process.on('SIGTERM', stopNow);
+  process.on('SIGINT', stopNow);
+
   await log(`watch started as "${config.machineName}", answering "${config.peer}"`);
   process.stdout.write(`watching as "${config.machineName}" (Ctrl-C to stop)\n`);
 
@@ -180,7 +194,9 @@ async function watch(): Promise<number> {
         }
 
         await log(`answering ${delivery.message.id}`);
-        const answer = await askClaude(delivery.safeText, config);
+        const answer = await askClaude(delivery.safeText, config, (child) => {
+          answering = child;
+        });
         if (answer.ok) {
           await workspace.mailbox.send(answer.text, { auto: true });
           await log(`answered ${delivery.message.id}`);
@@ -223,7 +239,13 @@ async function stopWatch(): Promise<number> {
 
 type Answer = { ok: true; text: string } | { ok: false; cause: string };
 
-async function askClaude(question: string, config: { claudeCommand: string; watchTools: string; watchCwd: string; peer: string }): Promise<Answer> {
+async function askClaude(
+  question: string,
+  config: { claudeCommand: string; watchTools: string; watchCwd: string; peer: string },
+  /** Donne le processus de reponse au veilleur pendant qu'il tourne, pour qu'un arret puisse
+   *  l'emporter avec lui. Rappele avec `undefined` des qu'il est termine. */
+  register: (child: ChildProcess | undefined) => void,
+): Promise<Answer> {
   // Le cadrage doit faire deux choses a la fois, et rater l'une des deux le rend inutile :
   // interdire l'action, et **exiger une reponse concrete**. Une premiere version ne disait que
   // la moitie defensive, et la machine distante repondait en demandant des precisions au lieu
@@ -239,7 +261,7 @@ async function askClaude(question: string, config: { claudeCommand: string; watc
     `--- message ---\n${question}`;
 
   try {
-    const { stdout } = await execFileAsync(
+    const running = execFileAsync(
       config.claudeCommand,
       [
         '-p',
@@ -265,6 +287,8 @@ async function askClaude(question: string, config: { claudeCommand: string; watc
         timeout: 900_000,
       },
     );
+    register(running.child);
+    const { stdout } = await running;
     return { ok: true, text: stdout.trim().length > 0 ? stdout.trim() : '(the answering session returned nothing)' };
   } catch (error) {
     // Jamais le message brut de Node : il recopie la commande entiere, donc le prompt, donc le
@@ -275,6 +299,8 @@ async function askClaude(question: string, config: { claudeCommand: string; watc
     // s'ecrit pareil pour un delai depasse et pour un code de sortie non nul.
     const failure = error as NodeJS.ErrnoException & { killed?: boolean };
     return { ok: false, cause: failure.killed === true ? 'timeout' : (failure.code ?? 'error') };
+  } finally {
+    register(undefined);
   }
 }
 
