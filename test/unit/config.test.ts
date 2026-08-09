@@ -57,6 +57,25 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig({ file: { ...minimal, peer: 'mac' } })).toThrow(/differ/);
   });
 
+  /**
+   * Audit du 9 aout 2026, confirme par execution sur ce Mac avec git 2.50.1 : `branch` part en
+   * position d'argument dans `git fetch origin <branch>`, et git lit tout argument commencant par
+   * `-` comme une option. `--upload-pack=touch temoin` cree le fichier, en affichant une erreur qui
+   * se lit comme une panne de reseau.
+   */
+  it('refuse un nom de branche que git prendrait pour une option', () => {
+    expect(() => resolveConfig({ file: { ...minimal, branch: '--upload-pack=touch /tmp/pwned' } })).toThrow();
+    expect(() => resolveConfig({ file: { ...minimal, branch: '-x' } })).toThrow();
+    // Atteignable par l'environnement, donc par un .envrc de projet : le meme garde doit y jouer.
+    expect(() => resolveConfig({ file: minimal, env: { CLAUDE_LINK_BRANCH: '--upload-pack=sh' } })).toThrow();
+  });
+
+  it('accepte les noms de branche ordinaires', () => {
+    expect(resolveConfig({ file: { ...minimal, branch: 'main' } }).branch).toBe('main');
+    expect(resolveConfig({ file: { ...minimal, branch: 'feature/canal-v2' } }).branch).toBe('feature/canal-v2');
+    expect(resolveConfig({ file: { ...minimal, branch: 'release-1.0.2' } }).branch).toBe('release-1.0.2');
+  });
+
   it('refuse une config sans depot', () => {
     expect(() => resolveConfig({ file: { machineName: 'mac', peer: 'windows' } })).toThrow();
   });

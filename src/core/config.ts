@@ -13,7 +13,22 @@ export const configSchema = z.object({
   peer: machineNameSchema,
   /** Depot Git dedie aux messages. Accepte une URL distante ou un chemin local (pour les tests). */
   repoUrl: z.string().min(1),
-  branch: z.string().min(1).default('main'),
+  /**
+   * La branche du depot de messages.
+   *
+   * Valide de forme, et pas seulement non vide : cette valeur part **en position d'argument** dans
+   * `git fetch origin <branch>`, et git lit tout argument commencant par `-` comme une option.
+   * Mesure sur ce Mac le 9 aout 2026, git 2.50.1 : `git fetch --quiet origin
+   * "--upload-pack=touch temoin"` cree le fichier, en affichant « Could not read from remote
+   * repository » - une erreur qui se lit comme une panne de reseau alors que la commande a tourne.
+   *
+   * Le champ est atteignable par `CLAUDE_LINK_BRANCH`, donc par un `.envrc` de projet : poser une
+   * variable y est plus facile qu'obtenir l'execution, et l'approbation se donne sans lire.
+   */
+  branch: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/, 'a branch name must start with a letter or digit')
+    .default('main'),
   /** Cadence du poll. Cinq secondes tiennent la barre des trente secondes bout en bout. */
   pollSeconds: z.number().int().min(1).max(3600).default(5),
   /** Combien de messages sont gardes par boite. Voir retention.ts pour le « pourquoi par nombre ». */
