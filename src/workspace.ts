@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Config } from './core/config.js';
 import { OperationLock } from './git/lock.js';
 import { GitRepo, MAILBOX_MARKER } from './git/repo.js';
-import { Mailbox, mailboxMarkerContent } from './mailbox.js';
+import { Mailbox, NotAMailboxError, mailboxMarkerContent } from './mailbox.js';
 
 /** Aucune conversion de fin de ligne, dans aucun sens : un message doit arriver octet pour octet. */
 const GITATTRIBUTES = '* -text\n';
@@ -49,6 +49,13 @@ async function cloneInto(workDir: string, repoDir: string, config: Config): Prom
 /**
  * Un depot neuf est vide : pas de branche, pas de marqueur. On y pose le marqueur, les attributs
  * et les deux boites. Le marqueur est ce qui autorisera, plus tard, les gestes destructeurs.
+ *
+ * **Et seulement un depot vide.** Cette fonction amorcait tout depot sans marqueur, y compris un
+ * depot de code plein de commits : elle y ecrivait `mailbox.json`, `.gitattributes`, deux dossiers
+ * `messages/` et un commit « init mailbox », **et poussait**. Quelqu'un qui donne le nom de son
+ * vrai projet au lieu de celui de sa boite - le cas le plus probable a l'installation - voyait donc
+ * son depot modifie. Trouve le 9 aout 2026 par le test d'installation, pas par relecture : le nom
+ * de la fonction disait « if empty » et le code ne le verifiait pas.
  */
 async function bootstrapIfEmpty(repo: GitRepo, repoDir: string, config: Config): Promise<void> {
   if (await exists(join(repoDir, MAILBOX_MARKER))) {
@@ -61,8 +68,14 @@ async function bootstrapIfEmpty(repo: GitRepo, repoDir: string, config: Config):
     if (await exists(join(repoDir, MAILBOX_MARKER))) {
       return;
     }
-  } catch {
-    // Depot encore vide : il n'a ni branche ni commit a recuperer. On l'amorce ci-dessous.
+    // Le fetch a reussi : ce depot a une branche et des commits. Il n'est pas vide, il n'a pas de
+    // marqueur, donc ce n'est pas une boite aux lettres - et on n'ecrit rien dedans.
+    throw new NotAMailboxError(repoDir);
+  } catch (error) {
+    if (error instanceof NotAMailboxError) {
+      throw error;
+    }
+    // Le fetch a echoue : le depot n'a ni branche ni commit a recuperer. Il est vide, on l'amorce.
   }
 
   await writeFile(join(repoDir, MAILBOX_MARKER), mailboxMarkerContent(), 'utf8');

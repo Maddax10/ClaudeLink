@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 import { type ChildProcess, execFile } from 'node:child_process';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { NotConfiguredError, loadApp } from './app.js';
-import { resolveConfig } from './core/config.js';
 import { shouldAnswer, someoneIsAround } from './core/watchGuard.js';
 import { clearAwaiting, readAwaiting } from './deliver/awaiting.js';
 import { markTurn, readLastTurn } from './deliver/presence.js';
 import { renderDeliveries } from './deliver/render.js';
 import { acquireWatchProcess, readWatchProcess, stopWatchProcess } from './deliver/watchProcess.js';
 import { configPath, logPath, resolveHome } from './paths.js';
+import { configureChannel } from './setup.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -68,17 +68,11 @@ async function init(args: string[]): Promise<number> {
     return 2;
   }
 
-  // Valide avant d'ecrire quoi que ce soit : un nom refuse doit l'etre ici, pas au premier envoi.
-  const config = resolveConfig({ file: { machineName, peer, repoUrl } });
-
-  await mkdir(home, { recursive: true });
-  await writeFile(configPath(home), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-
-  const { workspace } = await loadApp();
-  // Pose les deux curseurs sur l'etat courant : une machine qui s'attache ne doit pas deverser
-  // tout l'historique dans son premier contexte.
-  await workspace.mailbox.receive('session');
-  await workspace.mailbox.receive('watch');
+  const outcome = await configureChannel({ home, machineName, peer, repoUrl });
+  if (!outcome.ok) {
+    process.stderr.write(`${outcome.detail}\n`);
+    return 1;
+  }
 
   const serverPath = join(process.cwd(), 'dist', 'mcpServer.js');
   const cliPath = join(process.cwd(), 'dist', 'cli.js');
