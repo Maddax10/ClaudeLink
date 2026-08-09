@@ -6,5 +6,11 @@
     "name": "Maddax10"
   },
   "homepage": "https://github.com/Maddax10/ClaudeLink",
-  "keywords": ["mcp", "sync", "machines", "git"]
+  "keywords": [
+    "mcp",
+    "sync",
+    "machines",
+    "git"
+  ],
+  "mcpServers": "./mcp-servers.json"
 }

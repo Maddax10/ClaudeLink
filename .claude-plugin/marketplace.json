@@ -1,5 +1,6 @@
 {
   "name": "claude-link",
+  "description": "Le canal claude-link : deux machines qui se parlent par un depot Git prive que vous possedez.",
   "owner": {
     "name": "Maddax10"
   },
@@ -14,7 +15,12 @@
       },
       "category": "mcp",
       "homepage": "https://github.com/Maddax10/ClaudeLink",
-      "keywords": ["mcp", "sync", "machines", "git"]
+      "keywords": [
+        "mcp",
+        "sync",
+        "machines",
+        "git"
+      ]
     }
   ]
 }
