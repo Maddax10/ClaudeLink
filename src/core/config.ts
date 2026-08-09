@@ -12,7 +12,14 @@ export const configSchema = z.object({
   /** L'autre machine. Une seule : le produit est fait pour deux, pas pour une flotte. */
   peer: machineNameSchema,
   /** Depot Git dedie aux messages. Accepte une URL distante ou un chemin local (pour les tests). */
-  repoUrl: z.string().min(1),
+  /**
+   * Le depot de messages. Interdit de commencer par `-` : cette valeur part en position d'argument
+   * dans `git clone`, et git lit tout argument commencant par un tiret comme une option. Le clone
+   * echoue aujourd'hui avant d'executer quoi que ce soit, parce que le dossier de destination prend
+   * alors la place de l'URL et n'existe pas - mesure le 9 aout 2026. C'est une chance, pas une
+   * protection : le jour ou l'ordre des arguments change, la chance disparait.
+   */
+  repoUrl: z.string().min(1).regex(/^[^-]/, 'a repository address must not start with a dash'),
   /**
    * La branche du depot de messages.
    *
@@ -80,6 +87,19 @@ export interface ConfigSources {
 
 const ENV_PREFIX = 'CLAUDE_LINK_';
 
+/**
+ * `claudeCommand`, `watchTools` et `watchCwd` ne sont **pas** lisibles depuis l'environnement, et
+ * c'est une decision, pas un oubli.
+ *
+ * Les trois decident de ce que l'auto-repondeur execute, avec quels droits et dans quel dossier.
+ * `CLAUDE_LINK_CLAUDE_COMMAND=/tmp/quelque-chose` faisait lancer ce fichier par le veilleur ;
+ * `WATCH_TOOLS=Bash` lui donnait l'execution a distance. Une variable d'environnement se pose par
+ * un `.envrc` de projet qu'on approuve sans lire - c'est le vecteur qui a fait valider `branch` le
+ * 9 aout 2026, apres avoir mesure qu'un nom de branche pouvait executer une commande.
+ *
+ * Ces trois-la se configurent dans `config.json`, un fichier qu'on ouvre exprès.
+ */
+
 const ENV_KEYS: Readonly<Record<string, keyof Config>> = {
   [`${ENV_PREFIX}MACHINE`]: 'machineName',
   [`${ENV_PREFIX}PEER`]: 'peer',
@@ -89,9 +109,6 @@ const ENV_KEYS: Readonly<Record<string, keyof Config>> = {
   [`${ENV_PREFIX}RETENTION_KEEP`]: 'retentionKeep',
   [`${ENV_PREFIX}MAX_MESSAGE_CHARS`]: 'maxMessageChars',
   [`${ENV_PREFIX}CATCH_UP_MAX_MESSAGES`]: 'catchUpMaxMessages',
-  [`${ENV_PREFIX}CLAUDE_COMMAND`]: 'claudeCommand',
-  [`${ENV_PREFIX}WATCH_TOOLS`]: 'watchTools',
-  [`${ENV_PREFIX}WATCH_CWD`]: 'watchCwd',
   [`${ENV_PREFIX}REPLY_WAIT_SECONDS`]: 'replyWaitSeconds',
   [`${ENV_PREFIX}AUTO_WATCH`]: 'autoWatch',
   [`${ENV_PREFIX}WATCH_IDLE_SECONDS`]: 'watchIdleSeconds',

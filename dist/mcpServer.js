@@ -18922,12 +18922,12 @@ function isAlive(pid) {
 }
 
 // src/setup.ts
-import { mkdir as mkdir4, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
+import { mkdir as mkdir5, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
 import { dirname as dirname2, join as join7 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/deliver/attempts.ts
-import { readFile as readFile6, rm as rm6, writeFile as writeFile6 } from "node:fs/promises";
+import { mkdir as mkdir4, readFile as readFile6, rm as rm6, writeFile as writeFile6 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var attemptsSchema = external_exports.object({ count: external_exports.number().int().min(0) });
 function attemptsPath(home) {
@@ -18936,6 +18936,7 @@ function attemptsPath(home) {
 async function countAttempt(home) {
   const next = await readAttempts(home) + 1;
   try {
+    await mkdir4(home, { recursive: true });
     await writeFile6(attemptsPath(home), `${JSON.stringify({ count: next })}
 `, "utf8");
   } catch {
@@ -19060,11 +19061,18 @@ async function configureChannel(request) {
   }
   let config2;
   try {
-    config2 = resolveConfig({ file: { machineName, peer, repoUrl } });
+    config2 = resolveConfig({ file: { machineName, peer, repoUrl }, env: process.env });
   } catch (error2) {
     return { ok: false, cause: "invalid", detail: describe(error2) };
   }
-  await mkdir4(home, { recursive: true });
+  if (config2.repoUrl !== repoUrl) {
+    return {
+      ok: false,
+      cause: "invalid",
+      detail: `CLAUDE_LINK_REPO_URL is set to ${config2.repoUrl} and overrides the address you gave (${repoUrl}). Unset it, or set up the channel with that address.`
+    };
+  }
+  await mkdir5(home, { recursive: true });
   try {
     const workspace = await openWorkspace(home, config2);
     await workspace.mailbox.assertMailbox();
@@ -19115,11 +19123,12 @@ And the other machine needs the same setup, pointing at the same repository addr
 }
 function hookBlock() {
   const cliPath = join7(dirname2(fileURLToPath(import.meta.url)), "cli.js");
+  const command = (kind) => `node "${cliPath}" hook ${kind}`;
   return JSON.stringify(
     {
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: `node ${cliPath} hook session-start` }] }],
-        Stop: [{ hooks: [{ type: "command", command: `node ${cliPath} hook stop` }] }]
+        SessionStart: [{ hooks: [{ type: "command", command: command("session-start") }] }],
+        Stop: [{ hooks: [{ type: "command", command: command("stop") }] }]
       }
     },
     null,

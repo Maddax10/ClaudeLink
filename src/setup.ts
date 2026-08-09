@@ -172,12 +172,17 @@ export async function installChannel(request: InstallRequest, run?: GhRunner): P
  * differents selon la porte par laquelle on est entre.
  */
 export function hookBlock(): string {
+  // Le chemin est entre guillemets, et ce n'est pas cosmetique : cette chaine est interpretee par
+  // un shell. Mesure le 9 aout 2026 sur ce Mac - un chemin contenant une espace se coupe en deux,
+  // node cherche un module au nom tronque, et le hook echoue en silence. Personne ne recoit rien
+  // et rien ne dit pourquoi. `C:\Users\Jean Dupont\...` est un chemin Windows banal.
   const cliPath = join(dirname(fileURLToPath(import.meta.url)), 'cli.js');
+  const command = (kind: string) => `node "${cliPath}" hook ${kind}`;
   return JSON.stringify(
     {
       hooks: {
-        SessionStart: [{ hooks: [{ type: 'command', command: `node ${cliPath} hook session-start` }] }],
-        Stop: [{ hooks: [{ type: 'command', command: `node ${cliPath} hook stop` }] }],
+        SessionStart: [{ hooks: [{ type: 'command', command: command('session-start') }] }],
+        Stop: [{ hooks: [{ type: 'command', command: command('stop') }] }],
       },
     },
     null,

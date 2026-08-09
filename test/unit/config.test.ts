@@ -76,6 +76,33 @@ describe('resolveConfig', () => {
     expect(resolveConfig({ file: { ...minimal, branch: 'release-1.0.2' } }).branch).toBe('release-1.0.2');
   });
 
+  /**
+   * Audit du 9 aout 2026. Ces trois champs decident de ce que l'auto-repondeur execute, avec quels
+   * droits et ou. Les lire depuis l'environnement, c'est laisser un `.envrc` de projet - approuve
+   * sans etre lu - designer le binaire que le veilleur lance.
+   */
+  it('ne lit pas depuis l environnement ce qui devient une commande ou des droits', () => {
+    const config = resolveConfig({
+      file: minimal,
+      env: {
+        CLAUDE_LINK_CLAUDE_COMMAND: '/tmp/pas-claude',
+        CLAUDE_LINK_WATCH_TOOLS: 'Bash',
+        CLAUDE_LINK_WATCH_CWD: '/tmp',
+      },
+    });
+
+    expect(config.claudeCommand).toBe('claude');
+    expect(config.watchTools).toBe('Read,Glob,Grep');
+    expect(config.watchCwd).toBe('');
+  });
+
+  it('refuse une adresse de depot que git lirait comme une option', () => {
+    expect(() => resolveConfig({ file: { ...minimal, repoUrl: '--upload-pack=touch /tmp/x' } })).toThrow();
+    expect(() => resolveConfig({ file: minimal, env: { CLAUDE_LINK_REPO_URL: '-x' } })).toThrow();
+    // Et les adresses ordinaires passent, y compris un chemin local pour les tests.
+    expect(resolveConfig({ file: { ...minimal, repoUrl: '/tmp/boite.git' } }).repoUrl).toBe('/tmp/boite.git');
+  });
+
   it('refuse une config sans depot', () => {
     expect(() => resolveConfig({ file: { machineName: 'mac', peer: 'windows' } })).toThrow();
   });

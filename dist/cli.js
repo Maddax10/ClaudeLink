@@ -5032,9 +5032,16 @@ async function configureChannel(request) {
   }
   let config;
   try {
-    config = resolveConfig({ file: { machineName, peer, repoUrl } });
+    config = resolveConfig({ file: { machineName, peer, repoUrl }, env: process.env });
   } catch (error) {
     return { ok: false, cause: "invalid", detail: describe(error) };
+  }
+  if (config.repoUrl !== repoUrl) {
+    return {
+      ok: false,
+      cause: "invalid",
+      detail: `CLAUDE_LINK_REPO_URL is set to ${config.repoUrl} and overrides the address you gave (${repoUrl}). Unset it, or set up the channel with that address.`
+    };
   }
   await mkdir4(home, { recursive: true });
   try {
@@ -5055,11 +5062,12 @@ async function configureChannel(request) {
 }
 function hookBlock() {
   const cliPath = join6(dirname2(fileURLToPath(import.meta.url)), "cli.js");
+  const command = (kind) => `node "${cliPath}" hook ${kind}`;
   return JSON.stringify(
     {
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: `node ${cliPath} hook session-start` }] }],
-        Stop: [{ hooks: [{ type: "command", command: `node ${cliPath} hook stop` }] }]
+        SessionStart: [{ hooks: [{ type: "command", command: command("session-start") }] }],
+        Stop: [{ hooks: [{ type: "command", command: command("stop") }] }]
       }
     },
     null,
